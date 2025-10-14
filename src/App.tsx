@@ -13,9 +13,14 @@ import { ServiceDetail } from './pages/ServiceDetail';
 import { Dashboard } from './pages/Dashboard';
 import { VendorDashboard } from './pages/VendorDashboard';
 import { AdminDashboard } from './pages/AdminDashboard';
+import { AdminReports } from './pages/AdminReports.tsx'; 
 import { BookService } from './pages/BookService';
 import { MyBookings } from './pages/MyBookings';
 import { VendorProfile } from './pages/VendorProfile';
+import VendorManagement from "./pages/VendorManagement.tsx";
+import UserManagement from "./pages/UserManagement.tsx";
+
+
 
 function App() {
   return (
@@ -52,6 +57,22 @@ function App() {
                   <AdminDashboard />
                 </ProtectedRoute>
               } />
+              <Route path="/admin/reports" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <AdminReports />
+                </ProtectedRoute>
+              } />
+              <Route path="/admin/vendors" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <VendorManagement />
+                </ProtectedRoute>
+              } />
+              <Route path="/admin/users" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <UserManagement />
+                </ProtectedRoute>
+              } />
+              
               <Route path="/my-bookings" element={
                 <ProtectedRoute>
                   <MyBookings />

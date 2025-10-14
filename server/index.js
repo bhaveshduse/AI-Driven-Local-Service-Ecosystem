@@ -22,7 +22,7 @@ const app = express();
 const server = createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:5173",
+    origin: process.env.CLIENT_URL || "http://localhost:5174",
     methods: ["GET", "POST"]
   }
 });
@@ -32,7 +32,7 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/Swayam
 
 // Middleware
 app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:5173",
+  origin: process.env.CLIENT_URL || "http://localhost:5174",
   credentials: true
 }));
 app.use(express.json());
@@ -44,7 +44,7 @@ app.use('/api/users', authenticateToken, userRoutes);
 app.use('/api/vendors', authenticateToken, vendorRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/bookings', authenticateToken, bookingRoutes);
-app.use('/api/admin', authenticateToken, adminRoutes);
+app.use('/api/admin',authenticateToken,adminRoutes);
 
 // Socket.io for real-time notifications
 io.on('connection', (socket) => {

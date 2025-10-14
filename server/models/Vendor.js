@@ -84,12 +84,22 @@ const vendorSchema = new mongoose.Schema({
   },
   portfolio: [String], // image URLs
   verificationStatus: {
-    type: String,
-    enum: ['pending', 'verified', 'rejected'],
-    default: 'pending'
+      type: String,
+      enum: ['pending', 'verified', 'rejected'],
+      default: 'pending'
+  },
+  // 💡 Audit Trail Fields:
+  verifiedBy: { // Who performed the verification
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null
+  },
+  verificationDate: { // When the verification occurred
+      type: Date,
+      default: null
   }
 }, {
-  timestamps: true
+    timestamps: true
 });
 
 export default mongoose.model('Vendor', vendorSchema);

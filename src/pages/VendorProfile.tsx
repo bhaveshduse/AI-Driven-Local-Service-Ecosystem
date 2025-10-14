@@ -1,23 +1,25 @@
 import React, { useState, useEffect } from "react";
-import { User, Building, MapPin, Camera } from "lucide-react";
+import { User, Building, MapPin } from "lucide-react";
 
 export const VendorProfile = () => {
   const [activeTab, setActiveTab] = useState("profile");
 
   // Profile form states
-  const [profilePhoto, setProfilePhoto] = useState<File | null> (null);
+  const [profilePhoto, setProfilePhoto] = useState<File | null>(null);
   const [businessName, setBusinessName] = useState("");
-  const [experience, setExperience] = useState("");
+  const [experience, setExperience] = useState<string>("beginner");
   const [serviceCategories, setServiceCategories] = useState<string[]>([]);
   const [description, setDescription] = useState("");
   const [cities, setCities] = useState("");
-  const [radius, setRadius] = useState("");
+  const [radius, setRadius] = useState<number>(10);
+
+  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const categories = [
     "plumbing", "electrical", "carpentry", "cleaning", "painting",
     "appliance-repair", "hvac", "landscaping", "moving", "pest-control", "handyman"
   ];
-  
 
   // Fetch vendor profile when component mounts
   useEffect(() => {
@@ -27,11 +29,11 @@ export const VendorProfile = () => {
         const data = await res.json();
 
         setBusinessName(data.businessName || "");
-        setExperience(data.experience || "");
+        setExperience(data.experience || "beginner");
         setServiceCategories(data.serviceCategories || []);
         setDescription(data.description || "");
         setCities((data.serviceArea?.cities || []).join(", "));
-        setRadius(data.serviceArea?.radius || "");
+        setRadius(Number(data.serviceArea?.radius) || 0);
       } catch (error) {
         console.error("Error fetching vendor:", error);
       }
@@ -40,7 +42,7 @@ export const VendorProfile = () => {
   }, []);
 
   // Toggle category checkbox
-  const handleCategoryChange = (category:string) => {
+  const handleCategoryChange = (category: string) => {
     setServiceCategories((prev) =>
       prev.includes(category)
         ? prev.filter((c) => c !== category)
@@ -49,29 +51,35 @@ export const VendorProfile = () => {
   };
 
   // Save profile
-  const handleProfileSave = async (e:React.FormEvent<HTMLFormElement>) => {
+  const handleProfileSave = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    setLoading(true);
+    setMessage(null);
+
     try {
+      const formData = new FormData();
+      formData.append("businessName", businessName);
+      formData.append("experience", experience);
+      formData.append("serviceCategories", JSON.stringify(serviceCategories));
+      formData.append("description", description);
+      formData.append("cities", JSON.stringify(cities.split(",").map((c) => c.trim())));
+      formData.append("radius", radius.toString());
+      if (profilePhoto) formData.append("profilePhoto", profilePhoto);
+
       const res = await fetch("/api/vendors/update-profile", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({
-          businessName,
-          experience,
-          serviceCategories,
-          description,
-          serviceArea: {
-            cities: cities.split(",").map((c) => c.trim()),
-            radius,
-          },
-        }),
+        body: formData,
       });
-      const data = await res.json();
-      alert("Profile updated successfully!");
+
+      if (!res.ok) throw new Error("Failed to update");
+
+      setMessage({ type: "success", text: "Profile updated successfully!" });
     } catch (error) {
       console.error("Error saving profile:", error);
-      alert("Failed to update profile.");
+      setMessage({ type: "error", text: "Failed to update profile." });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -105,6 +113,18 @@ export const VendorProfile = () => {
                   Business Profile
                 </h2>
 
+                {message && (
+                  <div
+                    className={`mb-4 p-3 rounded-lg text-sm font-medium ${
+                      message.type === "success"
+                        ? "bg-green-100 text-green-700"
+                        : "bg-red-100 text-red-700"
+                    }`}
+                  >
+                    {message.text}
+                  </div>
+                )}
+
                 <form className="space-y-6" onSubmit={handleProfileSave}>
                   {/* Profile Photo */}
                   <div>
@@ -112,12 +132,12 @@ export const VendorProfile = () => {
                       Profile Photo
                     </label>
                     <div className="flex items-center space-x-4">
-                      <div className="w-24 h-24 bg-gray-200 rounded-full flex items-center justify-center">
+                      <div className="w-24 h-24 bg-gray-200 rounded-full flex items-center justify-center overflow-hidden">
                         {profilePhoto ? (
                           <img
                             src={URL.createObjectURL(profilePhoto)}
                             alt="Profile"
-                            className="w-24 h-24 rounded-full object-cover"
+                            className="w-24 h-24 object-cover"
                           />
                         ) : (
                           <User className="h-12 w-12 text-gray-400" />
@@ -126,8 +146,9 @@ export const VendorProfile = () => {
                       <input
                         type="file"
                         accept="image/*"
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setProfilePhoto(e.target.files ? e.target.files[0] : null)}
-
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                          setProfilePhoto(e.target.files ? e.target.files[0] : null)
+                        }
                       />
                     </div>
                   </div>
@@ -144,6 +165,7 @@ export const VendorProfile = () => {
                         value={businessName}
                         onChange={(e) => setBusinessName(e.target.value)}
                         className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        required
                       />
                     </div>
                   </div>
@@ -151,14 +173,18 @@ export const VendorProfile = () => {
                   {/* Experience */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Years of Experience
+                      Experience Level
                     </label>
-                    <input
-                      type="number"
+                    <select
                       value={experience}
                       onChange={(e) => setExperience(e.target.value)}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    />
+                    >
+                      <option value="beginner">Beginner (0–1 year)</option>
+                      <option value="intermediate">Intermediate (2–4 years)</option>
+                      <option value="moderate">Moderate (5–9 years)</option>
+                      <option value="experienced">Experienced (10+ years)</option>
+                    </select>
                   </div>
 
                   {/* Categories */}
@@ -213,22 +239,29 @@ export const VendorProfile = () => {
                         />
                       </div>
                       <div>
-                        <input
-                          type="number"
+                        <select
                           value={radius}
-                          onChange={(e) => setRadius(e.target.value)}
-                          placeholder="Service radius (km)"
+                          onChange={(e) => setRadius(Number(e.target.value))}
                           className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                        />
+                        >
+                          <option value={5}>Up to 5 km</option>
+                          <option value={10}>Up to 10 km</option>
+              
+                        </select>
                       </div>
                     </div>
                   </div>
 
                   <button
                     type="submit"
-                    className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-blue-700"
+                    disabled={loading || !businessName || serviceCategories.length === 0}
+                    className={`w-full py-3 px-4 rounded-lg font-semibold text-white ${
+                      loading || !businessName || serviceCategories.length === 0
+                        ? "bg-gray-400 cursor-not-allowed"
+                        : "bg-blue-600 hover:bg-blue-700"
+                    }`}
                   >
-                    Save Profile
+                    {loading ? "Saving..." : "Save Profile"}
                   </button>
                 </form>
               </div>

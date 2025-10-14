@@ -32,3 +32,4 @@ export const authorizeRole = (roles) => {
     next();
   };
 };
+export const admin = authorizeRole(['admin']);

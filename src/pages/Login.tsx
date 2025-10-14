@@ -121,7 +121,7 @@ export const Login = () => {
             <div className="text-xs text-gray-600 space-y-1">
               <p><strong>Customer:</strong> customer@demo.com / demo123</p>
               <p><strong>Vendor:</strong> vendor@demo.com / demo123</p>
-              <p><strong>Admin:</strong> admin@demo.com / demo123</p>
+              <p><strong>Admin:</strong> dusebhavesh6@gmail.com / BhaveshDuse</p>
             </div>
           </div>
         </div>
