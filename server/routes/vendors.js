@@ -106,7 +106,7 @@ router.put(
 );
 
 // ===============================
-// Admin: Verify Vendor & Create Default Services
+// Admin: Verify Vendor & Auto-Create Default Services
 // ===============================
 router.post(
   '/verify/:id',
@@ -117,14 +117,17 @@ router.post(
       const vendor = await Vendor.findById(req.params.id);
       if (!vendor) return res.status(404).json({ error: 'Vendor not found.' });
 
+      // 1️⃣ Update vendor verification
       vendor.verificationStatus = 'verified';
       vendor.verifiedBy = req.user._id;
       vendor.verificationDate = new Date();
       await vendor.save();
 
-      // Hybrid approach: create default services if none exist
+      // 2️⃣ Check and create default services if not present
       const existingServices = await Service.find({ vendor: vendor._id });
-      if (existingServices.length === 0) {
+
+      let insertedServices = [];
+      if (existingServices.length === 0 && vendor.serviceCategories?.length > 0) {
         const defaultServices = vendor.serviceCategories.map(cat => ({
           title: `${cat.charAt(0).toUpperCase() + cat.slice(1)} Service`,
           description: `Professional ${cat.replace('-', ' ')} service by ${vendor.businessName}`,
@@ -134,15 +137,34 @@ router.post(
           vendor: vendor._id,
           isActive: true,
         }));
-        await Service.insertMany(defaultServices);
+
+        insertedServices = await Service.insertMany(defaultServices);
+        vendor.services = insertedServices.map(s => s._id);
+        await vendor.save();
+
+        console.log(`✅ Added ${insertedServices.length} default services for vendor: ${vendor.businessName}`);
       }
 
-      res.json({ message: 'Vendor verified & default services created.', vendor });
+      // 3️⃣ Emit real-time event via Socket.IO (auto-update frontend)
+      if (insertedServices.length > 0) {
+        const { io } = await import('../server.js');
+        io.emit('serviceUpdated', { vendorId: vendor._id, services: insertedServices });
+      }
+
+      // 4️⃣ Respond back
+      res.json({
+        message: 'Vendor verified successfully and services created (if none existed).',
+        vendor,
+        newServices: insertedServices
+      });
     } catch (err) {
+      console.error('Verification Error:', err);
       res.status(500).json({ error: err.message });
     }
   }
 );
+
+
 
 // ===============================
 // Get Vendor Bookings

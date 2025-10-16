@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Check, X, Eye, RefreshCw } from 'lucide-react';
 
 // ===============================================
-// 1. TYPE DEFINITIONS
+// 1. TYPE DEFINITIONS (Unchanged)
 // ===============================================
 
 interface User {
@@ -36,7 +36,7 @@ interface VendorApiResponse {
 }
 
 // ===============================================
-// 2. API CONFIGURATION & COMPONENT
+// 2. API CONFIGURATION & COMPONENT (Logic Unchanged, only UI/Styling changes below)
 // ===============================================
 
 const getAdminToken = (): string | null => localStorage.getItem('admin_token');
@@ -139,11 +139,11 @@ const VendorManagement: React.FC = () => {
 
     return (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-            <div className="mb-6 flex justify-between items-center">
+            <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
                 <h1 className="text-3xl font-bold text-gray-800">Vendor Management</h1>
                 <button
                     onClick={fetchVendors}
-                    className="flex items-center space-x-1 p-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                    className="flex items-center space-x-1 p-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 w-full sm:w-auto justify-center" // Added w-full sm:w-auto and justify-center
                 >
                     <RefreshCw className="h-4 w-4" />
                     <span>Refresh List</span>
@@ -157,7 +157,7 @@ const VendorManagement: React.FC = () => {
                         setFilterStatus(e.target.value as 'all' | Vendor['verificationStatus']);
                         setCurrentPage(1);
                     }}
-                    className="border border-gray-300 p-2 rounded-md"
+                    className="border border-gray-300 p-2 rounded-md w-full sm:w-auto" // Added w-full sm:w-auto
                 >
                     <option value="all">All Statuses</option>
                     <option value="pending">Pending Verification</option>
@@ -166,28 +166,32 @@ const VendorManagement: React.FC = () => {
                 </select>
             </div>
 
-            <div className="bg-white shadow-lg rounded-xl overflow-hidden">
+            {/* RESPONSIVENESS CHANGE: Added overflow-x-auto to contain the table */}
+            <div className="bg-white shadow-lg rounded-xl overflow-x-auto">
+                {/* min-w-full class keeps the table from collapsing on small screens */}
                 <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                         <tr>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Business Name</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vendor Name</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact Email</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Categories</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Active</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                            {/* Removed all 'whitespace-nowrap' from headers */}
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]">Business Name</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">Vendor Name</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[150px]">Contact Email</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">Categories</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[80px]">Status</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[50px]">Active</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]">Actions</th>
                         </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
                         {vendors.length > 0 ? (
                             vendors.map((vendor) => (
                                 <tr key={vendor._id}>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{vendor.businessName}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{vendor.user?.name || 'N/A'}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{vendor.user?.email || 'N/A'}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{vendor.serviceCategories.join(', ')}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
+                                    {/* RESPONSIVENESS CHANGE: Added min-w-[120px] and removed whitespace-nowrap from table cells */}
+                                    <td className="px-6 py-4 text-sm font-medium text-gray-900 min-w-[120px]">{vendor.businessName}</td>
+                                    <td className="px-6 py-4 text-sm font-medium text-gray-900 min-w-[100px]">{vendor.user?.name || 'N/A'}</td>
+                                    <td className="px-6 py-4 text-sm text-gray-500 min-w-[150px]">{vendor.user?.email || 'N/A'}</td>
+                                    <td className="px-6 py-4 text-sm text-gray-500 min-w-[100px]">{vendor.serviceCategories.join(', ')}</td>
+                                    <td className="px-6 py-4">
                                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                                             vendor.verificationStatus === 'verified' ? 'bg-green-100 text-green-800' :
                                             vendor.verificationStatus === 'pending' ? 'bg-yellow-100 text-yellow-800' :
@@ -196,14 +200,11 @@ const VendorManagement: React.FC = () => {
                                             {vendor.verificationStatus}
                                         </span>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{vendor.user?.isActive ? 'Yes' : 'No'}</td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-
-
-                                        {/* Pending → Verify */}
+                                    <td className="px-6 py-4 text-sm text-gray-500 min-w-[50px]">{vendor.user?.isActive ? 'Yes' : 'No'}</td>
+                                    <td className="px-6 py-4 text-sm font-medium space-x-2 min-w-[120px]">
+                                        {/* Action buttons structure is already reasonably compact */}
                                         {vendor.verificationStatus === 'pending' && (
                                         <div className="flex space-x-2">
-                                            {/* Verify / Tick */}
                                             <button 
                                             title="Verify Vendor"
                                             onClick={() => handleVerificationAction(vendor._id, true)} 
@@ -211,8 +212,6 @@ const VendorManagement: React.FC = () => {
                                             >
                                             <Check className="h-5 w-5" />
                                             </button>
-
-                                            {/* Reject / Cross */}
                                             <button 
                                             title="Reject Vendor"
                                             onClick={() => handleVerificationAction(vendor._id, false)} 
@@ -222,9 +221,6 @@ const VendorManagement: React.FC = () => {
                                             </button>
                                         </div>
                                         )}
-
-
-                                        {/* Verified → Revoke */}
                                         {vendor.verificationStatus === 'verified' && (
                                             <button 
                                                 title="Revoke Verification"
@@ -234,8 +230,6 @@ const VendorManagement: React.FC = () => {
                                                 <X className="h-5 w-5" />
                                             </button>
                                         )}
-
-                                        {/* Rejected → Optional Re-verify */}
                                         {vendor.verificationStatus === 'rejected' && (
                                             <button 
                                                 title="Re-verify Vendor"
@@ -268,7 +262,7 @@ const VendorManagement: React.FC = () => {
                     >
                         Previous
                     </button>
-                    <span className="text-sm text-gray-700">
+                    <span className="text-sm text-gray-700 text-center mx-2">
                         Page {currentPage} of {totalPages}
                     </span>
                     <button 
