@@ -13,12 +13,12 @@ import { ServiceDetail } from './pages/ServiceDetail';
 import { Dashboard } from './pages/Dashboard';
 import { VendorDashboard } from './pages/VendorDashboard';
 import { AdminDashboard } from './pages/AdminDashboard';
-import { AdminReports } from './pages/AdminReports.tsx'; 
+import { AdminReports } from './pages/AdminReports'; 
 import { BookService } from './pages/BookService';
 import { MyBookings } from './pages/MyBookings';
 import { VendorProfile } from './pages/VendorProfile';
-import VendorManagement from "./pages/VendorManagement.tsx";
-import UserManagement from "./pages/UserManagement.tsx";
+import VendorManagement from "./pages/VendorManagement";
+import UserManagement from "./pages/UserManagement";
 
 
 

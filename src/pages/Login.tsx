@@ -23,7 +23,14 @@ export const Login = () => {
 
     try {
       await login(email, password);
-      navigate(from, { replace: true });
+      
+      if (location.state?.aiQuery) {
+        navigate('/', { state: { aiQuery: location.state.aiQuery } });
+      } else if (location.state?.searchQuery) {
+        navigate(`/services?search=${encodeURIComponent(location.state.searchQuery)}`);
+      } else {
+        navigate(from, { replace: true });
+      }
     } catch (error: any) {
       setError(error.message || 'Login failed');
     } finally {

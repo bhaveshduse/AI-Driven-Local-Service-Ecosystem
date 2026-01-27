@@ -52,10 +52,13 @@ export const BookService = () => {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    fetchService();
+    if (serviceId) {
+      fetchService();
+    }
   }, [serviceId]);
 
   const fetchService = async () => {
+    if (!serviceId) return;
     try {
       const response = await fetch(`/api/services/${serviceId}`);
       const data = await response.json();
@@ -74,18 +77,17 @@ export const BookService = () => {
     if (name.includes('.')) {
       const keys = name.split('.');
       setBookingData(prev => {
-        const updated = { ...prev };
-        let current = updated;
+        const newState = { ...prev } as any;
+        let current = newState;
         
         for (let i = 0; i < keys.length - 1; i++) {
-          if (!current[keys[i]]) {
-            current[keys[i]] = {};
-          }
-          current = current[keys[i]];
+          const key = keys[i];
+          current[key] = { ...current[key] };
+          current = current[key];
         }
         
         current[keys[keys.length - 1]] = value;
-        return updated;
+        return newState;
       });
     } else {
       setBookingData(prev => ({
@@ -123,7 +125,7 @@ export const BookService = () => {
         throw new Error(error.error || 'Booking failed');
       }
 
-      const booking = await response.json();
+      await response.json();
       navigate('/my-bookings', { 
         state: { message: 'Booking created successfully!' }
       });
@@ -196,7 +198,7 @@ export const BookService = () => {
                   <p className="text-sm text-gray-600 mt-1">by {service.vendor.businessName}</p>
                   <div className="flex items-center justify-between mt-2">
                     <span className="text-sm text-gray-500 capitalize">{service.category.replace('-', ' ')}</span>
-                    <span className="font-semibold text-gray-800">${service.pricing.amount} {service.pricing.unit}</span>
+                    <span className="font-semibold text-gray-800">₹{service.pricing.amount} {service.pricing.unit}</span>
                   </div>
                 </div>
               </div>
@@ -353,12 +355,12 @@ export const BookService = () => {
 
               <div className="flex items-center justify-between py-2 border-t border-gray-100">
                 <span className="text-gray-600">Service Fee:</span>
-                <span className="font-medium text-gray-800">${service.pricing.amount}</span>
+                <span className="font-medium text-gray-800">₹{service.pricing.amount}</span>
               </div>
 
               <div className="flex items-center justify-between py-2 border-t border-gray-200 font-semibold">
                 <span className="text-gray-800">Total:</span>
-                <span className="text-xl text-blue-600">${service.pricing.amount}</span>
+                <span className="text-xl text-blue-600">₹{service.pricing.amount}</span>
               </div>
             </div>
 

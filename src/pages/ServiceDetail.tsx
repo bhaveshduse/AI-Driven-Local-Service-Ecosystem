@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Star, MapPin, Clock, DollarSign, User, Phone, Mail, Calendar } from 'lucide-react';
+import { Star, MapPin, Clock, IndianRupee, User, Phone, Mail, Calendar } from 'lucide-react';
 
 interface Service {
   _id: string;
@@ -121,8 +121,8 @@ export const ServiceDetail = () => {
                   <span>{service.duration.estimated} {service.duration.unit}</span>
                 </div>
                 <div className="flex items-center space-x-1">
-                  <DollarSign className="h-5 w-5" />
-                  <span>${service.pricing.amount} {service.pricing.unit}</span>
+                  <IndianRupee className="h-5 w-5" />
+                  <span>₹{service.pricing.amount} {service.pricing.unit}</span>
                 </div>
               </div>
 
@@ -183,7 +183,7 @@ export const ServiceDetail = () => {
             <div className="bg-white rounded-xl shadow-lg p-6 sticky top-24">
               <div className="text-center mb-6">
                 <div className="text-3xl font-bold text-gray-800 mb-2">
-                  ${service.pricing.amount}
+                  ₹{service.pricing.amount}
                 </div>
                 <p className="text-gray-600">{service.pricing.unit}</p>
               </div>

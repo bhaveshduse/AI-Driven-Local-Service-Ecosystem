@@ -54,10 +54,25 @@ const initialAnalyticsState: AnalyticsData = {
     monthlyBookings: []
 };
 
+// --- Helper: Format Time Ago ---
+const formatTimeAgo = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+    
+    if (seconds < 60) return 'just now';
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    const days = Math.floor(hours / 24);
+    return `${days}d ago`;
+};
 
 export const AdminDashboard: React.FC = () => {
     const navigate = useNavigate();
     const [analytics, setAnalytics] = useState<AnalyticsData>(initialAnalyticsState);
+    const [recentActivities, setRecentActivities] = useState<ActivityItem[]>([]);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [isRedirecting, setIsRedirecting] = useState<boolean>(false); // New state for managing redirect
     const [error, setError] = useState<string | null>(null);
@@ -82,9 +97,8 @@ export const AdminDashboard: React.FC = () => {
         }
 
         try {
-            const url = `${API_BASE_URL}/analytics`;
-
-            const response = await fetch(url, {
+            // 1. Fetch Analytics
+            const response = await fetch(`${API_BASE_URL}/analytics`, {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
@@ -113,6 +127,29 @@ export const AdminDashboard: React.FC = () => {
             const data: AnalyticsData = await response.json();
             setAnalytics(data);
 
+            // 2. Fetch Recent Activities (Non-blocking for main dashboard)
+            try {
+                const activitiesResponse = await fetch(`${API_BASE_URL}/activities?limit=5`, {
+                    method: 'GET',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${adminToken}`
+                    }
+                });
+                if (activitiesResponse.ok) {
+                    const actData = await activitiesResponse.json();
+                    const activities = actData.activities || [];
+                    setRecentActivities(activities.map((item: any) => ({
+                        type: item.type,
+                        message: item.message,
+                        time: formatTimeAgo(item.createdAt),
+                        status: item.status
+                    })));
+                }
+            } catch (actErr) {
+                console.warn("Failed to fetch activities:", actErr);
+            }
+
         } catch (err: any) {
             console.error("Error fetching analytics data:", err.message);
             // Provide mock data if the API call fails
@@ -124,6 +161,32 @@ export const AdminDashboard: React.FC = () => {
                 totalRevenue: 5600000,
                 monthlyBookings: [] 
             });
+            setRecentActivities([
+                {
+                    type: 'user',
+                    message: 'New customer registered: John Smith',
+                    time: '5 minutes ago',
+                    status: 'success'
+                },
+                {
+                    type: 'vendor',
+                    message: 'Vendor verification pending: Clean Pro Services',
+                    time: '15 minutes ago',
+                    status: 'warning'
+                },
+                {
+                    type: 'booking',
+                    message: 'Booking completed: Plumbing service in Downtown',
+                    time: '1 hour ago',
+                    status: 'success'
+                },
+                {
+                    type: 'dispute',
+                    message: 'Dispute reported for booking #1234',
+                    time: '2 hours ago',
+                    status: 'error'
+                }
+            ]);
             setError(`Failed to load real-time data. Displaying mock data. Error: ${err.message}`);
         } finally {
             setIsLoading(false);
@@ -171,34 +234,6 @@ export const AdminDashboard: React.FC = () => {
             icon: <IndianRupeeIcon className="h-8 w-8" />,
             color: 'bg-orange-600',
             change: '+18% (30d)'
-        }
-    ];
-
-    // --- Hardcoded Data for UI Demo (Remains the same) ---
-    const recentActivities: ActivityItem[] = [
-        {
-            type: 'user',
-            message: 'New customer registered: John Smith',
-            time: '5 minutes ago',
-            status: 'success'
-        },
-        {
-            type: 'vendor',
-            message: 'Vendor verification pending: Clean Pro Services',
-            time: '15 minutes ago',
-            status: 'warning'
-        },
-        {
-            type: 'booking',
-            message: 'Booking completed: Plumbing service in Downtown',
-            time: '1 hour ago',
-            status: 'success'
-        },
-        {
-            type: 'dispute',
-            message: 'Dispute reported for booking #1234',
-            time: '2 hours ago',
-            status: 'error'
         }
     ];
 
