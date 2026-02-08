@@ -13,18 +13,21 @@ import { ServiceDetail } from './pages/ServiceDetail';
 import { Dashboard } from './pages/Dashboard';
 import { VendorDashboard } from './pages/VendorDashboard';
 import { AdminDashboard } from './pages/AdminDashboard';
-import { AdminReports } from './pages/AdminReports'; 
 import { BookService } from './pages/BookService';
+import { BookingDetail } from './pages/BookingDetail';
+import { AdminBookings } from './pages/AdminBookings';
 import { MyBookings } from './pages/MyBookings';
 import { VendorProfile } from './pages/VendorProfile';
 import VendorManagement from "./pages/VendorManagement";
 import UserManagement from "./pages/UserManagement";
-
+import CategoryManagement from "./pages/CategoryManagement";
+import { AdminAnalytics } from './pages/AdminAnalytics';
+import { AdminDisputes } from './pages/AdminDisputes';
 
 
 function App() {
   return (
-    <Router>
+    <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
       <AuthProvider>
         <div className="min-h-screen bg-gray-50">
           <Navbar />
@@ -57,9 +60,14 @@ function App() {
                   <AdminDashboard />
                 </ProtectedRoute>
               } />
-              <Route path="/admin/reports" element={
+              <Route path="/admin/disputes" element={
                 <ProtectedRoute allowedRoles={['admin']}>
-                  <AdminReports />
+                  <AdminDisputes />
+                </ProtectedRoute>
+              } />
+              <Route path="/admin/analytics" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <AdminAnalytics />
                 </ProtectedRoute>
               } />
               <Route path="/admin/vendors" element={
@@ -72,10 +80,25 @@ function App() {
                   <UserManagement />
                 </ProtectedRoute>
               } />
+              <Route path="/admin/categories" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <CategoryManagement />
+                </ProtectedRoute>
+              } />
+              <Route path="/admin/bookings" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <AdminBookings />
+                </ProtectedRoute>
+              } />
               
               <Route path="/my-bookings" element={
                 <ProtectedRoute>
                   <MyBookings />
+                </ProtectedRoute>
+              } />
+              <Route path="/bookings/:id" element={
+                <ProtectedRoute>
+                  <BookingDetail />
                 </ProtectedRoute>
               } />
               <Route path="/vendor-profile" element={

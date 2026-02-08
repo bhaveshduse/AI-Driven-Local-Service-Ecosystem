@@ -2,8 +2,8 @@ import React, { useState, useEffect, useCallback } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { Search, MapPin, Star, Filter } from "lucide-react";
 import debounce from "lodash.debounce";
-import io from "socket.io-client";
 import { Toaster, toast } from "react-hot-toast";
+import { useAuth } from "../contexts/AuthContext";
 
 
 interface Category {
@@ -51,7 +51,21 @@ interface Filters {
   location: string;
 }
 
-const socket = io("http://localhost:5000"); // replace with your backend URL
+const CATEGORY_IMAGES: Record<string, string> = {
+  plumbing: 'https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d1?auto=format&fit=crop&q=80&w=800',
+  electrical: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&q=80&w=800',
+  cleaning: 'https://images.unsplash.com/photo-1584622050111-993a426fbf0a?auto=format&fit=crop&q=80&w=800',
+  painting: 'https://images.unsplash.com/photo-1562259949-e8e7689d7828?auto=format&fit=crop&q=80&w=800',
+  carpentry: 'https://images.unsplash.com/photo-1533090161767-e6ffed986c88?auto=format&fit=crop&q=80&w=800',
+  'appliance-repair': 'https://images.unsplash.com/photo-1581092921461-eab62e97a782?auto=format&fit=crop&q=80&w=800',
+  hvac: 'https://images.unsplash.com/photo-1581094794329-c8112a89af12?auto=format&fit=crop&q=80&w=800',
+  landscaping: 'https://images.unsplash.com/photo-1558904541-efa843a96f01?auto=format&fit=crop&q=80&w=800',
+  moving: 'https://images.unsplash.com/photo-1600518464441-9154a4dea21b?auto=format&fit=crop&q=80&w=800',
+  'pest-control': 'https://images.unsplash.com/photo-1587574293340-e0011c4e8ecf?auto=format&fit=crop&q=80&w=800',
+  handyman: 'https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d1?auto=format&fit=crop&q=80&w=800',
+};
+
+const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d1?auto=format&fit=crop&q=80&w=800";
 
 export const Services: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -64,6 +78,13 @@ export const Services: React.FC = () => {
   });
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [showFilters, setShowFilters] = useState<boolean>(false);
+  const { socket, isConnected } = useAuth();
+
+  const getImageUrl = (path: string) => {
+    if (!path) return '';
+    if (path.startsWith('http')) return path;
+    return `/${path.replace(/\\/g, '/')}`;
+  };
 
   // ------------------- Fetch categories -------------------
   useEffect(() => {
@@ -103,6 +124,15 @@ export const Services: React.FC = () => {
   );
 
   useEffect(() => {
+    // Do not perform a search for queries with only one character.
+    // An empty search string is allowed, as it fetches all services.
+    if (filters.search.length === 1) {
+      // To provide instant feedback, we can clear the current services
+      // and prevent the API call.
+      setServices([]);
+      return;
+    }
+
     fetchServices(filters);
   
 
@@ -115,43 +145,47 @@ export const Services: React.FC = () => {
   }, [filters, fetchServices, setSearchParams]);
 
   // ------------------- WebSocket for real-time updates -------------------
-useEffect(() => {
-  socket.on("servicesUpdated", (data: { vendorId: string; services: Service[] }) => {
-    const { services: newServices } = data;
+  useEffect(() => {
+    if (!socket || !isConnected) return;
 
-    setServices((prev) => {
-      const updated = [...prev];
-      newServices.forEach((svc) => {
-        const index = updated.findIndex((s) => s._id === svc._id);
-        if (index !== -1) {
-          updated[index] = svc; // update existing
-        } else {
-          updated.unshift(svc); // add new
-        }
+    const handleServicesUpdated = (data: { vendorId: string; services: Service[] }) => {
+      const { services: newServices } = data;
+
+      setServices((prev) => {
+        const updated = [...prev];
+        newServices.forEach((svc) => {
+          const index = updated.findIndex((s) => s._id === svc._id);
+          if (index !== -1) {
+            updated[index] = svc; // update existing
+          } else {
+            updated.unshift(svc); // add new
+          }
+        });
+        return updated;
       });
-      return updated;
-    });
 
-    // ✅ Show visual alert for new services
-    toast.success(`${newServices.length} new service(s) added!`, {
-      duration: 4000,
-      style: {
-        background: "#1e3a8a", // deep blue
-        color: "#fff",
-        fontWeight: "500",
-        borderRadius: "8px",
-        padding: "10px 16px",
-      },
-      icon: "⚡",
-    });
+      // ✅ Show visual alert for new services
+      toast.success(`${newServices.length} new service(s) added!`, {
+        duration: 4000,
+        style: {
+          background: "#1e3a8a", // deep blue
+          color: "#fff",
+          fontWeight: "500",
+          borderRadius: "8px",
+          padding: "10px 16px",
+        },
+        icon: "⚡",
+      });
 
-    console.log("✅ Realtime: New services received", newServices);
-  });
+      console.log("✅ Realtime: New services received", newServices);
+    };
 
-  return () => {
-    socket.off("servicesUpdated");
-  };
-}, []);
+    socket.on("servicesUpdated", handleServicesUpdated);
+
+    return () => {
+      socket.off("servicesUpdated", handleServicesUpdated);
+    };
+  }, [socket, isConnected]);
 
 
 
@@ -236,19 +270,24 @@ useEffect(() => {
                 className="bg-white rounded-xl shadow overflow-hidden hover:shadow-lg transition-shadow group"
               >
                 <div className="relative h-48 sm:h-40 md:h-48 bg-gray-200">
-                  {service.images?.[0] ? (
-                    <img
-                      src={service.images[0]}
-                      alt={service.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center text-gray-400 text-4xl">
-                      🛠️
-                    </div>
-                  )}
+                  <img
+                    src={service.images?.[0] ? getImageUrl(service.images[0]) : (CATEGORY_IMAGES[service.category] || FALLBACK_IMAGE)}
+                    alt={service.title}
+                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                    onError={(e) => {
+                      const target = e.currentTarget;
+                      target.onerror = null; // Prevent infinite loop
+                      // Try category image first, then generic fallback
+                      const categoryImage = CATEGORY_IMAGES[service.category];
+                      if (categoryImage && target.src !== categoryImage) {
+                          target.src = categoryImage;
+                      } else {
+                          target.src = FALLBACK_IMAGE;
+                      }
+                    }}
+                  />
                   <div className="absolute top-2 left-2 bg-blue-600 text-white px-2 py-1 rounded text-xs font-medium capitalize">
-                    {service.category.replace("-", " ")}
+                    {service.category?.replace('-', ' ') || 'Service'}
                   </div>
                 </div>
                 <div className="p-3 sm:p-4 md:p-6">

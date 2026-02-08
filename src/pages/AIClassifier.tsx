@@ -24,7 +24,7 @@ export default function AIClassifier() {
     setResult(null);
 
     try {
-      const response = await fetch('http://localhost:8001/recommend', {
+      const response = await fetch('/ai-api/recommend', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

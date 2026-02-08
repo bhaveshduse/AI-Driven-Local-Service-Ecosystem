@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Loader2, Search, Users, X, Edit, Trash2, Save, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { Loader2, Search, Users, X, Edit, Trash2, Save, CheckCircle, XCircle, Clock, ChevronLeft, ChevronRight, RefreshCw, AlertTriangle } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { toast } from 'react-hot-toast';
 
 // --- TYPE DEFINITIONS ---
 interface User {
@@ -20,8 +22,7 @@ interface UserApiResponse {
 }
 
 // --- API CONFIGURATION ---
-const API_BASE_URL = 'http://localhost:5000/api/admin'; // Your backend
-const getAdminToken = (): string | null => localStorage.getItem('admin_token');
+const API_BASE_URL = '/api/admin'; // Your backend
 
 // --- UTILITY COMPONENTS ---
 
@@ -81,6 +82,7 @@ const Modal: React.FC<ModalProps> = ({ title, onClose, children }) => (
 
 // --- MAIN COMPONENT ---
 const UserManagement: React.FC = () => {
+    const { token } = useAuth();
     const [users, setUsers] = useState<User[]>([]);
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
@@ -97,6 +99,10 @@ const UserManagement: React.FC = () => {
     // Delete Modal
     const [userToDelete, setUserToDelete] = useState<User | null>(null);
 
+    // New state for clearing all data
+    const [isClearDataModalOpen, setIsClearDataModalOpen] = useState(false);
+    const [isClearingData, setIsClearingData] = useState(false);
+
     // --- FETCH USERS ---
     const fetchUsers = useCallback(async (page: number = currentPage, search: string = searchTerm, isManualRefresh: boolean = false) => {
         if (isManualRefresh) {
@@ -106,7 +112,6 @@ const UserManagement: React.FC = () => {
         }
         setError(null);
 
-        const token = getAdminToken();
         if (!token) {
             setError("Admin token missing. Please log in.");
             setIsLoading(false);
@@ -145,7 +150,7 @@ const UserManagement: React.FC = () => {
             setIsLoading(false);
             setIsRefreshing(false);
         }
-    }, [currentPage, searchTerm, isRefreshing]);
+    }, [currentPage, searchTerm, isRefreshing, token]);
 
     // Effect to run on mount and when page/search changes
     useEffect(() => {
@@ -167,8 +172,7 @@ const UserManagement: React.FC = () => {
 
     const handleSave = async () => {
         if (!editingUser) return;
-        const token = getAdminToken();
-        if (!token) return alert("Admin token missing.");
+        if (!token) return toast.error("Authentication token missing. Please log in again.");
 
         setIsLoading(true); // Set global loading for API call feedback
         try {
@@ -186,12 +190,12 @@ const UserManagement: React.FC = () => {
                 throw new Error(errData.error || "Failed to update user.");
             }
 
-            console.log("User updated successfully."); 
+            toast.success("User updated successfully.");
             setIsEditModalOpen(false);
             // Re-fetch users to show updated data
             fetchUsers(currentPage, searchTerm, true); 
         } catch (err: any) {
-            alert(err.message);
+            toast.error(err.message || "Failed to update user.");
         } finally {
             setIsLoading(false);
         }
@@ -204,8 +208,7 @@ const UserManagement: React.FC = () => {
 
     const confirmDelete = async () => {
         if (!userToDelete) return;
-        const token = getAdminToken();
-        if (!token) return alert("Admin token missing.");
+        if (!token) return toast.error("Authentication token missing. Please log in again.");
 
         setIsLoading(true);
         try {
@@ -219,17 +222,42 @@ const UserManagement: React.FC = () => {
                 throw new Error(errData.error || "Failed to delete user.");
             }
 
-            console.log("User deleted successfully.");
+            toast.success("User deleted successfully.");
             setUserToDelete(null);
             // Re-fetch users to update the list, staying on the current page
             fetchUsers(currentPage, searchTerm, true); 
         } catch (err: any) {
-            alert(err.message);
+            toast.error(err.message || "Failed to delete user.");
         } finally {
             setIsLoading(false);
         }
     };
 
+    // --- CLEAR ALL DATA ---
+    const handleClearAllData = async () => {
+        if (!token) return toast.error("Authentication token missing.");
+        setIsClearingData(true);
+        try {
+            const response = await fetch(`${API_BASE_URL}/clear-all-data`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` },
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.error || "Failed to clear data.");
+            }
+
+            toast.success("All non-admin data has been cleared.");
+            setIsClearDataModalOpen(false);
+            // Refresh the user list, which should now only contain the admin
+            fetchUsers(1, '', true);
+        } catch (err: any) {
+            toast.error(err.message || "An error occurred while clearing data.");
+        } finally {
+            setIsClearingData(false);
+        }
+    };
     const getRoleBadgeType = (role: User['role']) => {
         switch (role) {
             case 'admin':
@@ -382,6 +410,25 @@ const UserManagement: React.FC = () => {
                     </div>
                 )}
 
+                {/* Danger Zone Section */}
+                <div className="mt-12 p-6 bg-red-50 border-2 border-dashed border-red-300 rounded-xl">
+                    <div className="flex items-center">
+                        <AlertTriangle className="w-8 h-8 text-red-500 mr-4" />
+                        <div>
+                            <h3 className="text-xl font-bold text-red-800">Danger Zone</h3>
+                            <p className="text-red-700 mt-1">This action is destructive and cannot be undone.</p>
+                        </div>
+                    </div>
+                    <div className="mt-4 pl-12">
+                        <button
+                            onClick={() => setIsClearDataModalOpen(true)}
+                            className="px-4 py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition-colors"
+                        >
+                            Clear All Non-Admin Data
+                        </button>
+                    </div>
+                </div>
+
                 {/* Edit Modal */}
                 {isEditModalOpen && editingUser && (
                     <Modal title={`Edit User: ${editingUser.name}`} onClose={() => setIsEditModalOpen(false)}>
@@ -447,6 +494,43 @@ const UserManagement: React.FC = () => {
                                     className="px-5 py-2 text-sm font-medium bg-red-600 text-white rounded-lg shadow-md hover:bg-red-700 transition-colors flex items-center gap-1"
                                 >
                                     <Trash2 className="w-4 h-4"/> Delete User
+                                </button>
+                            </div>
+                        </div>
+                    </Modal>
+                )}
+
+                {/* Clear All Data Confirmation Modal */}
+                {isClearDataModalOpen && (
+                    <Modal title="Confirm Clear All Data" onClose={() => setIsClearDataModalOpen(false)}>
+                        <div className="space-y-4">
+                            <p className="text-gray-700">
+                                Are you absolutely sure you want to clear all data? This will permanently delete all users (except your admin account), vendors, services, and bookings.
+                                <br/><br/>
+                                <strong className="font-semibold text-red-600">This action is irreversible.</strong>
+                            </p>
+                            <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
+                                <button 
+                                    onClick={() => setIsClearDataModalOpen(false)} 
+                                    className="px-5 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button 
+                                    onClick={handleClearAllData}
+                                    disabled={isClearingData}
+                                    className="px-5 py-2 text-sm font-medium bg-red-600 text-white rounded-lg shadow-md hover:bg-red-700 transition-colors flex items-center gap-1 disabled:opacity-50"
+                                >
+                                    {isClearingData ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin"/>
+                                            <span>Clearing...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Trash2 className="w-4 h-4"/> I Understand, Clear All Data
+                                        </>
+                                    )}
                                 </button>
                             </div>
                         </div>

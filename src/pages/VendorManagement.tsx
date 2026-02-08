@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Check, X, Eye, RefreshCw } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { toast } from 'react-hot-toast';
+import { Check, X, Eye, RefreshCw, FileText } from 'lucide-react';
 
 // ===============================================
 // 1. TYPE DEFINITIONS (Unchanged)
@@ -26,6 +28,9 @@ interface Vendor {
     verificationStatus: 'pending' | 'verified' | 'rejected';
     verifiedBy?: string;
     verificationDate?: string;
+    documents?: {
+        identityProof?: string;
+    };
     [key: string]: any;
 }
 
@@ -39,11 +44,11 @@ interface VendorApiResponse {
 // 2. API CONFIGURATION & COMPONENT (Logic Unchanged, only UI/Styling changes below)
 // ===============================================
 
-const getAdminToken = (): string | null => localStorage.getItem('admin_token');
-const API_BASE_URL = 'http://localhost:5000/api/admin';
+const API_BASE_URL = '/api/admin';
 
 const VendorManagement: React.FC = () => {
     const [vendors, setVendors] = useState<Vendor[]>([]);
+    const { token } = useAuth(); // Use token from AuthContext
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
     const [currentPage, setCurrentPage] = useState<number>(1);
@@ -54,8 +59,7 @@ const VendorManagement: React.FC = () => {
     const fetchVendors = useCallback(async () => {
         setIsLoading(true);
         setError(null);
-        const adminToken = getAdminToken();
-        if (!adminToken) {
+        if (!token) {
             setError("Authentication token missing. Please log in.");
             setIsLoading(false);
             return;
@@ -73,7 +77,7 @@ const VendorManagement: React.FC = () => {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${adminToken}`
+                    'Authorization': `Bearer ${token}`
                 }
             });
 
@@ -93,13 +97,12 @@ const VendorManagement: React.FC = () => {
         } finally {
             setIsLoading(false);
         }
-    }, [currentPage, filterStatus]);
+    }, [currentPage, filterStatus, token]);
 
     // --- Verification/Action Handler ---
     const handleVerificationAction = async (vendorId: string, isVerified: boolean) => {
-        const adminToken = getAdminToken();
-        if (!adminToken) {
-            alert("Admin token missing. Cannot perform action.");
+        if (!token) {
+            toast.error("Admin token missing. Cannot perform action.");
             return;
         }
 
@@ -111,9 +114,9 @@ const VendorManagement: React.FC = () => {
                 method: 'PATCH',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${adminToken}`
+                    'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify({ isVerified })
+                body: JSON.stringify({ verificationStatus })
             });
 
             if (!response.ok) {
@@ -121,11 +124,18 @@ const VendorManagement: React.FC = () => {
                 throw new Error(errorData.error || `Failed to update status.`);
             }
 
-            alert(`Vendor ${vendorId} status updated to ${verificationStatus}`);
+            toast.success(`Vendor status updated to ${verificationStatus}`);
             fetchVendors();
         } catch (err: any) {
-            alert(`Error updating vendor status: ${err.message}`);
+            toast.error(`Error updating vendor status: ${err.message}`);
         }
+    };
+
+    const handleViewDocument = (path: string) => {
+        // Assuming your server serves static files from /uploads
+        // You might need to add app.use('/uploads', express.static('uploads')) in your server/index.js
+        const url = `/${path.replace(/\\/g, '/')}`;
+        window.open(url, '_blank');
     };
 
     // --- Initial Load ---
@@ -177,6 +187,7 @@ const VendorManagement: React.FC = () => {
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">Vendor Name</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[150px]">Contact Email</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">Categories</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">Joined</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[80px]">Status</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[50px]">Active</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]">Actions</th>
@@ -191,6 +202,7 @@ const VendorManagement: React.FC = () => {
                                     <td className="px-6 py-4 text-sm font-medium text-gray-900 min-w-[100px]">{vendor.user?.name || 'N/A'}</td>
                                     <td className="px-6 py-4 text-sm text-gray-500 min-w-[150px]">{vendor.user?.email || 'N/A'}</td>
                                     <td className="px-6 py-4 text-sm text-gray-500 min-w-[100px]">{vendor.serviceCategories.join(', ')}</td>
+                                    <td className="px-6 py-4 text-sm text-gray-500 min-w-[100px]">{vendor.user?.createdAt ? new Date(vendor.user.createdAt).toLocaleDateString('en-GB') : 'N/A'}</td>
                                     <td className="px-6 py-4">
                                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
                                             vendor.verificationStatus === 'verified' ? 'bg-green-100 text-green-800' :
@@ -203,6 +215,17 @@ const VendorManagement: React.FC = () => {
                                     <td className="px-6 py-4 text-sm text-gray-500 min-w-[50px]">{vendor.user?.isActive ? 'Yes' : 'No'}</td>
                                     <td className="px-6 py-4 text-sm font-medium space-x-2 min-w-[120px]">
                                         {/* Action buttons structure is already reasonably compact */}
+                                        
+                                        {vendor.documents?.identityProof && (
+                                            <button
+                                                title="View ID Proof"
+                                                onClick={() => handleViewDocument(vendor.documents!.identityProof!)}
+                                                className="text-blue-600 hover:text-blue-900 mr-2"
+                                            >
+                                                <FileText className="h-5 w-5" />
+                                            </button>
+                                        )}
+
                                         {vendor.verificationStatus === 'pending' && (
                                         <div className="flex space-x-2">
                                             <button 

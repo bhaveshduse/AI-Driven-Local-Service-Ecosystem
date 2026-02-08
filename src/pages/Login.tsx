@@ -14,22 +14,29 @@ export const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const from = location.state?.from?.pathname || '/dashboard';
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setIsLoading(true);
 
     try {
-      await login(email, password);
+      const user = await login(email, password);
       
       if (location.state?.aiQuery) {
         navigate('/', { state: { aiQuery: location.state.aiQuery } });
       } else if (location.state?.searchQuery) {
         navigate(`/services?search=${encodeURIComponent(location.state.searchQuery)}`);
       } else {
-        navigate(from, { replace: true });
+        const from = location.state?.from?.pathname;
+        if (from) {
+          navigate(from, { replace: true });
+        } else if (user.role === 'vendor') {
+          navigate('/vendor-dashboard', { replace: true });
+        } else if (user.role === 'admin') {
+          navigate('/admin-dashboard', { replace: true });
+        } else {
+          navigate('/dashboard', { replace: true });
+        }
       }
     } catch (error: any) {
       setError(error.message || 'Login failed');

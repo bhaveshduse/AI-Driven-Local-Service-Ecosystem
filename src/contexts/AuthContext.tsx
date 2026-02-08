@@ -1,11 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { io, Socket } from 'socket.io-client';
 
 // ... (Interface definitions for User, RegisterData, AuthContextType remain the same) ...
-interface User {
+export interface User {
     id: string;
     name: string;
     email: string;
     role: 'customer' | 'vendor' | 'admin';
+    isVerified: boolean;
+    isActive: boolean;
 }
 
 interface RegisterData {
@@ -21,10 +24,12 @@ interface RegisterData {
 interface AuthContextType {
     user: User | null;
     token: string | null;
-    login: (email: string, password: string) => Promise<void>;
-    register: (data: RegisterData) => Promise<void>;
+    login: (email: string, password: string) => Promise<User>;
+    register: (data: RegisterData) => Promise<User>;
     logout: () => void;
     isLoading: boolean;
+    socket: Socket | null;
+    isConnected: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -43,27 +48,66 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const [user, setUser] = useState<User | null>(null);
     const [token, setToken] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
+    const [socket, setSocket] = useState<Socket | null>(null);
+    const [isConnected, setIsConnected] = useState(false);
 
     // --- EFFECT: Load state on mount ---
     useEffect(() => {
-        // The dashboard (for regular users) is protected by 'token'. 
-        // AdminDashboard is protected by 'admin_token', which is loaded implicitly there.
+        // Unify token loading. There is only one user logged in at a time.
         const storedToken = localStorage.getItem('token');
         const storedUser = localStorage.getItem('user');
 
         if (storedToken && storedUser) {
-            setToken(storedToken);
-            setUser(JSON.parse(storedUser));
-        }
-
-        // 💡 CRITICAL: Load admin token if available for admin-specific pages
-        const adminToken = localStorage.getItem('admin_token');
-        if (adminToken && !storedToken) {
-            setToken(adminToken);
+            try {
+                setToken(storedToken);
+                setUser(JSON.parse(storedUser));
+            } catch (error) {
+                console.error("Failed to parse user data from localStorage", error);
+            }
         }
 
         setIsLoading(false);
     }, []);
+
+    // --- EFFECT: Manage Socket.IO connection ---
+    useEffect(() => {
+        // Initialize socket connection only once
+        const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+
+        const newSocket = io(API_URL, { 
+            autoConnect: false // Do not connect automatically
+        });
+        setSocket(newSocket);
+
+        newSocket.on('connect', () => {
+            console.log('Socket.IO: Connected successfully with ID:', newSocket.id);
+            setIsConnected(true);
+        });
+
+        newSocket.on('disconnect', (reason) => {
+            console.warn('Socket.IO: Disconnected. Reason:', reason);
+            setIsConnected(false);
+        });
+
+        newSocket.on('connect_error', (error) => {
+            console.error('Socket.IO: Connection Error.', error);
+            setIsConnected(false);
+        });
+
+        // Cleanup on component unmount
+        return () => {
+            newSocket.disconnect();
+        };
+    }, []); // Empty dependency array ensures this runs only once
+
+    useEffect(() => {
+        if (socket && token && user) {
+            socket.auth = { token, role: user.role };
+            socket.connect();
+        } else if (socket) {
+            socket.disconnect();
+        }
+    }, [socket, token, user]); // This effect manages connection state
 
     const handleError = async (response: Response, defaultMsg: string) => {
         let message = defaultMsg;
@@ -97,32 +141,22 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             setUser(loggedInUser);
             setToken(newToken);
 
-            // 🛑 FIX START: Conditional token saving for Admin
-            if (loggedInUser.role === 'admin') {
-                // Save token using the key expected by AdminDashboard.tsx
-                localStorage.setItem('admin_token', newToken);
-                
-                // Clear the generic token/user state to ensure only the admin dashboard relies on it
-                // (Optional, but safer for segregation)
-                localStorage.removeItem('token');
-                localStorage.removeItem('user'); 
-                
-            } else {
-                // Save tokens for regular users (customer/vendor) using the generic keys
-                localStorage.setItem('token', newToken);
-                localStorage.setItem('user', JSON.stringify(loggedInUser));
-                
-                // Remove admin token to prevent cross-role access (if it somehow existed)
-                localStorage.removeItem('admin_token');
-            }
-            // 🛑 FIX END
+            // Always use the same keys for token and user, regardless of role.
+            localStorage.setItem('token', newToken);
+            localStorage.setItem('user', JSON.stringify(loggedInUser));
+
+            // Clean up old, fragmented keys just in case.
+            localStorage.removeItem('admin_token');
+            localStorage.removeItem('admin_user');
+
+            return loggedInUser;
 
         } finally {
             setIsLoading(false);
         }
     };
 
-    const register = async (userData: RegisterData) => {
+    const register = async (userData: RegisterData): Promise<User> => {
         setIsLoading(true);
         try {
             const response = await fetch('/api/auth/register', {
@@ -143,6 +177,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             // For simplicity, registration for non-admin uses the generic keys
             localStorage.setItem('token', newToken);
             localStorage.setItem('user', JSON.stringify(registeredUser));
+
+            return registeredUser;
             
         } finally {
             setIsLoading(false);
@@ -152,10 +188,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const logout = () => {
         setUser(null);
         setToken(null);
-        // Clear all possible stored tokens/users
+        // Clear the unified token and user from storage.
         localStorage.removeItem('token');
         localStorage.removeItem('user');
-        localStorage.removeItem('admin_token'); // Make sure the admin token is cleared!
     };
 
     const value: AuthContextType = {
@@ -165,6 +200,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         register,
         logout,
         isLoading,
+        socket,
+        isConnected,
     };
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

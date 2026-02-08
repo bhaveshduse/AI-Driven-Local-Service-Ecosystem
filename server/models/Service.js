@@ -14,19 +14,7 @@ const serviceSchema = new mongoose.Schema({
   category: {
     type: String,
     required: true,
-    enum: [
-      'plumbing',
-      'electrical',
-      'carpentry',
-      'cleaning',
-      'painting',
-      'appliance-repair',
-      'hvac',
-      'landscaping',
-      'moving',
-      'pest-control',
-      'handyman'
-    ]
+    // The enum is removed to allow for dynamic categories from the Category collection.
   },
   description: {
     type: String,

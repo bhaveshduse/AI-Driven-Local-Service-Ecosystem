@@ -17,19 +17,7 @@ const vendorSchema = new mongoose.Schema({
   }],
   serviceCategories: [{
     type: String,
-    enum: [
-      'plumbing',
-      'electrical',
-      'carpentry',
-      'cleaning',
-      'painting',
-      'appliance-repair',
-      'hvac',
-      'landscaping',
-      'moving',
-      'pest-control',
-      'handyman'
-    ]
+    // The enum is removed to allow for dynamic categories from the Category collection.
   }],
   serviceArea: {
     radius: {
@@ -72,7 +60,8 @@ const vendorSchema = new mongoose.Schema({
   documents: {
     businessLicense: String,
     insurance: String,
-    certifications: [String]
+    certifications: [String],
+    identityProof: String // Path to Aadhaar/ID file
   },
   experience: {
     type: Number,

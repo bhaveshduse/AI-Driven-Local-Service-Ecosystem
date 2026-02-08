@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
 // Import necessary icons
-import { Users, UserCheck, Calendar, IndianRupeeIcon, TrendingUp, Activity, RefreshCw } from 'lucide-react';
+import { Users, UserCheck, Calendar, IndianRupee, TrendingUp, Activity, RefreshCw, Layers, AlertCircle, AlertTriangle } from 'lucide-react';
 // Import routing hooks for navigation actions
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+import { toast } from 'react-hot-toast';
 
 // ===============================================
 // 1. TYPE DEFINITIONS
@@ -20,7 +22,7 @@ interface AnalyticsData {
 
 // Interface for a single recent activity item
 interface ActivityItem {
-    type: 'user' | 'vendor' | 'booking' | 'dispute'; // Union type for activity type
+    type: 'user' | 'vendor' | 'booking' | 'report'; // Union type for activity type
     message: string;
     time: string;
     status: 'success' | 'warning' | 'error'; // Union type for status
@@ -38,11 +40,7 @@ interface QuickStat {
 // ===============================================
 // 2. API CONFIGURATION
 // ===============================================
-const getAdminToken = (): string | null => {
-    // 💡 IMPORTANT: This key 'admin_token' must match what is used in your AuthProvider's login function
-    return localStorage.getItem('admin_token');
-};
-const API_BASE_URL = 'http://localhost:5000/api/admin'; 
+const API_BASE_URL = '/api/admin'; 
 
 // --- Initial state for loading ---
 const initialAnalyticsState: AnalyticsData = {
@@ -71,6 +69,7 @@ const formatTimeAgo = (dateString: string) => {
 
 export const AdminDashboard: React.FC = () => {
     const navigate = useNavigate();
+    const { token, logout, socket, isConnected } = useAuth();
     const [analytics, setAnalytics] = useState<AnalyticsData>(initialAnalyticsState);
     const [recentActivities, setRecentActivities] = useState<ActivityItem[]>([]);
     const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -81,9 +80,8 @@ export const AdminDashboard: React.FC = () => {
     const fetchAnalytics = useCallback(async () => {
         setIsLoading(true);
         setError(null);
-        const adminToken = getAdminToken();
 
-        if (!adminToken) {
+        if (!token) {
             setError("Authentication token missing. Redirecting to login...");
             setIsLoading(false);
             setIsRedirecting(true);
@@ -102,14 +100,14 @@ export const AdminDashboard: React.FC = () => {
                 method: 'GET',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${adminToken}` 
+                    'Authorization': `Bearer ${token}` 
                 }
             });
 
             if (!response.ok) {
                 // Handle 401/403 specifically (Expired/Invalid Token)
                 if (response.status === 401 || response.status === 403) {
-                    localStorage.removeItem('admin_token'); // Clear the expired/invalid token
+                    logout(); // Use context logout to clear state
                     setError("Session expired or token invalid. Please log in again.");
                     setIsRedirecting(true);
                     // 🛑 FIX: Redirect to the generic /login route
@@ -133,7 +131,7 @@ export const AdminDashboard: React.FC = () => {
                     method: 'GET',
                     headers: {
                         'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${adminToken}`
+                        'Authorization': `Bearer ${token}`
                     }
                 });
                 if (activitiesResponse.ok) {
@@ -152,52 +150,65 @@ export const AdminDashboard: React.FC = () => {
 
         } catch (err: any) {
             console.error("Error fetching analytics data:", err.message);
-            // Provide mock data if the API call fails
-            setAnalytics({ 
-                totalUsers: 1250, 
-                totalVendors: 78, 
-                totalBookings: 3450, 
-                completedBookings: 3200, 
-                totalRevenue: 5600000,
-                monthlyBookings: [] 
-            });
-            setRecentActivities([
-                {
-                    type: 'user',
-                    message: 'New customer registered: John Smith',
-                    time: '5 minutes ago',
-                    status: 'success'
-                },
-                {
-                    type: 'vendor',
-                    message: 'Vendor verification pending: Clean Pro Services',
-                    time: '15 minutes ago',
-                    status: 'warning'
-                },
-                {
-                    type: 'booking',
-                    message: 'Booking completed: Plumbing service in Downtown',
-                    time: '1 hour ago',
-                    status: 'success'
-                },
-                {
-                    type: 'dispute',
-                    message: 'Dispute reported for booking #1234',
-                    time: '2 hours ago',
-                    status: 'error'
-                }
-            ]);
-            setError(`Failed to load real-time data. Displaying mock data. Error: ${err.message}`);
+            setError(`Failed to load real-time data. Error: ${err.message}`);
         } finally {
             setIsLoading(false);
         }
-    }, [navigate]); // navigate added to dependency array
+    }, [navigate, token, logout]); // navigate added to dependency array
 
 
     // --- Side Effect: Fetch data on mount ---
     useEffect(() => {
         fetchAnalytics();
     }, [fetchAnalytics]);
+
+    // --- Side Effect for Real-time Report Notifications ---
+    useEffect(() => {
+        if (socket && isConnected) {
+            const handleNewDispute = (data: { bookingId: string; reason: string; raisedBy: { name: string; role: string; }}) => {
+                toast.custom(
+                    (t) => (
+                        <div
+                            className={`${
+                                t.visible ? 'animate-enter' : 'animate-leave'
+                            } max-w-md w-full bg-white shadow-lg rounded-lg pointer-events-auto flex ring-1 ring-black ring-opacity-5`}
+                        >
+                            <div className="flex-1 w-0 p-4">
+                                <div className="flex items-start">
+                                    <div className="flex-shrink-0 pt-0.5">
+                                        <AlertTriangle className="h-6 w-6 text-yellow-500" />
+                                    </div>
+                                    <div className="ml-3 flex-1">
+                                        <p className="text-sm font-medium text-gray-900">
+                                            New Dispute Raised
+                                        </p>
+                                        <p className="mt-1 text-sm text-gray-500">
+                                            {data.raisedBy.name} raised a dispute: "{data.reason}"
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="flex border-l border-gray-200">
+                                <button
+                                    onClick={() => { navigate(`/admin/disputes`); toast.dismiss(t.id); }}
+                                    className="w-full border border-transparent rounded-none rounded-r-lg p-4 flex items-center justify-center text-sm font-medium text-blue-600 hover:text-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                >
+                                    Review
+                                </button>
+                            </div>
+                        </div>
+                    ),
+                    { duration: 10000 } // Keep it on screen for 10 seconds
+                );
+            };
+
+            socket.on('new-dispute', handleNewDispute);
+
+            return () => {
+                socket.off('new-dispute', handleNewDispute);
+            };
+        }
+    }, [socket, isConnected, navigate]);
 
 
     // --- Derived State for Quick Stats (Uses the data fetching result) ---
@@ -231,7 +242,7 @@ export const AdminDashboard: React.FC = () => {
                 currency: 'INR',
                 maximumFractionDigits: 0
             }),
-            icon: <IndianRupeeIcon className="h-8 w-8" />,
+            icon: <IndianRupee className="h-8 w-8" />,
             color: 'bg-orange-600',
             change: '+18% (30d)'
         }
@@ -246,8 +257,8 @@ export const AdminDashboard: React.FC = () => {
                 return <UserCheck className="h-5 w-5" />;
             case 'booking':
                 return <Calendar className="h-5 w-5" />;
-            case 'dispute':
-                return <IndianRupeeIcon className="h-5 w-5" />;
+            case 'report':
+                return <AlertCircle className="h-5 w-5" />;
             default:
                 return <Activity className="h-5 w-5" />;
         }
@@ -399,7 +410,7 @@ export const AdminDashboard: React.FC = () => {
                                 </button>
 
                                 <button 
-                                    onClick={() => navigate('/admin/reports')}
+                                    onClick={() => navigate('/admin/analytics')}
                                     className="flex items-center justify-between p-4 border-2 border-gray-200 rounded-lg hover:border-orange-300 hover:bg-orange-50 transition-all"
                                 >
                                     <div className="flex items-center space-x-3">
@@ -407,11 +418,43 @@ export const AdminDashboard: React.FC = () => {
                                             <TrendingUp className="h-5 w-5 text-orange-600" />
                                         </div>
                                         <div className="text-left">
-                                            <p className="font-medium text-gray-800">Analytics</p>
-                                            <p className="text-sm text-gray-500">Detailed reports</p>
+                                            <p className="font-medium text-gray-800">Performance Analytics</p>
+                                            <p className="text-sm text-gray-500">View charts & reports</p>
                                         </div>
                                     </div>
                                     <span className="text-orange-600">→</span>
+                                </button>
+
+                                <button 
+                                    onClick={() => navigate('/admin/categories')}
+                                    className="flex items-center justify-between p-4 border-2 border-gray-200 rounded-lg hover:border-teal-300 hover:bg-teal-50 transition-all"
+                                >
+                                    <div className="flex items-center space-x-3">
+                                        <div className="bg-teal-100 p-2 rounded-full">
+                                            <Layers className="h-5 w-5 text-teal-600" />
+                                        </div>
+                                        <div className="text-left">
+                                            <p className="font-medium text-gray-800">Categories</p>
+                                            <p className="text-sm text-gray-500">Manage service types</p>
+                                        </div>
+                                    </div>
+                                    <span className="text-teal-600">→</span>
+                                </button>
+
+                                <button 
+                                    onClick={() => navigate('/admin/disputes')}
+                                    className="flex items-center justify-between p-4 border-2 border-gray-200 rounded-lg hover:border-red-300 hover:bg-red-50 transition-all"
+                                >
+                                    <div className="flex items-center space-x-3">
+                                        <div className="bg-red-100 p-2 rounded-full">
+                                            <AlertCircle className="h-5 w-5 text-red-600" />
+                                        </div>
+                                        <div className="text-left">
+                                            <p className="font-medium text-gray-800">Manage Disputes</p>
+                                            <p className="text-sm text-gray-500">Resolve customer issues</p>
+                                        </div>
+                                    </div>
+                                    <span className="text-red-600">→</span>
                                 </button>
                             </div>
                         </div>

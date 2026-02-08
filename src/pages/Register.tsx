@@ -46,8 +46,14 @@ export const Register = () => {
     setIsLoading(true);
 
     try {
-      await register(formData);
-      navigate('/dashboard');
+      const newUser = await register(formData);
+      // Role-based navigation after successful registration
+      if (newUser.role === 'vendor') {
+        navigate('/vendor-dashboard', { replace: true });
+      } else {
+        // Default for customers
+        navigate('/dashboard', { replace: true });
+      }
     } catch (error) {
       if (error instanceof Error) {
         setError(error.message);

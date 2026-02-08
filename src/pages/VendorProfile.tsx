@@ -1,45 +1,71 @@
 import React, { useState, useEffect } from "react";
-import { User, Building, MapPin } from "lucide-react";
+import { User, Building, MapPin, FileText, Upload } from "lucide-react";
+import { useAuth } from "../contexts/AuthContext";
+
+interface Category {
+  id: string;
+  name: string;
+}
 
 export const VendorProfile = () => {
+  const { token } = useAuth();
   const [activeTab, setActiveTab] = useState("profile");
+  const [categories, setCategories] = useState<Category[]>([]);
 
   // Profile form states
   const [profilePhoto, setProfilePhoto] = useState<File | null>(null);
+  const [identityProof, setIdentityProof] = useState<File | null>(null);
   const [businessName, setBusinessName] = useState("");
-  const [experience, setExperience] = useState<string>("beginner");
+  const [experience, setExperience] = useState<number>(1);
   const [serviceCategories, setServiceCategories] = useState<string[]>([]);
   const [description, setDescription] = useState("");
   const [cities, setCities] = useState("");
   const [radius, setRadius] = useState<number>(10);
+  const [street, setStreet] = useState("");
+  const [state, setState] = useState("");
+  const [zipCode, setZipCode] = useState("");
 
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const categories = [
-    "plumbing", "electrical", "carpentry", "cleaning", "painting",
-    "appliance-repair", "hvac", "landscaping", "moving", "pest-control", "handyman"
-  ];
-
   // Fetch vendor profile when component mounts
   useEffect(() => {
-    const fetchVendor = async () => {
+    const fetchCategories = async () => {
       try {
-        const res = await fetch("/api/vendors/me", { credentials: "include" });
+        const res = await fetch("/api/services/categories/list");
+        if (res.ok) {
+          const data = await res.json();
+          setCategories(data);
+        }
+      } catch (err) {
+        console.error("Error fetching categories:", err);
+      }
+    };
+
+    const fetchVendor = async () => {
+      if (!token) return;
+      try {
+        const res = await fetch("/api/vendors/profile", {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
         const data = await res.json();
 
         setBusinessName(data.businessName || "");
-        setExperience(data.experience || "beginner");
+        setExperience(Number(data.experience) || 1);
         setServiceCategories(data.serviceCategories || []);
         setDescription(data.description || "");
         setCities((data.serviceArea?.cities || []).join(", "));
         setRadius(Number(data.serviceArea?.radius) || 0);
+        setStreet(data.user?.address?.street || "");
+        setState(data.user?.address?.state || "");
+        setZipCode(data.user?.address?.zipCode || "");
       } catch (error) {
         console.error("Error fetching vendor:", error);
       }
     };
     fetchVendor();
-  }, []);
+    fetchCategories();
+  }, [token]);
 
   // Toggle category checkbox
   const handleCategoryChange = (category: string) => {
@@ -53,22 +79,27 @@ export const VendorProfile = () => {
   // Save profile
   const handleProfileSave = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    if (!token) return;
     setLoading(true);
     setMessage(null);
 
     try {
       const formData = new FormData();
       formData.append("businessName", businessName);
-      formData.append("experience", experience);
+      formData.append("experience", experience.toString());
       formData.append("serviceCategories", JSON.stringify(serviceCategories));
       formData.append("description", description);
       formData.append("cities", JSON.stringify(cities.split(",").map((c) => c.trim())));
       formData.append("radius", radius.toString());
+      formData.append("street", street);
+      formData.append("state", state);
+      formData.append("zipCode", zipCode);
       if (profilePhoto) formData.append("profilePhoto", profilePhoto);
+      if (identityProof) formData.append("identityProof", identityProof);
 
-      const res = await fetch("/api/vendors/update-profile", {
+      const res = await fetch("/api/vendors/profile", {
         method: "PUT",
-        credentials: "include",
+        headers: { 'Authorization': `Bearer ${token}` }, // Do not set Content-Type for FormData
         body: formData,
       });
 
@@ -177,13 +208,13 @@ export const VendorProfile = () => {
                     </label>
                     <select
                       value={experience}
-                      onChange={(e) => setExperience(e.target.value)}
+                      onChange={(e) => setExperience(Number(e.target.value))}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     >
-                      <option value="beginner">Beginner (0–1 year)</option>
-                      <option value="intermediate">Intermediate (2–4 years)</option>
-                      <option value="moderate">Moderate (5–9 years)</option>
-                      <option value="experienced">Experienced (10+ years)</option>
+                      <option value={1}>Beginner (0–1 year)</option>
+                      <option value={3}>Intermediate (2–4 years)</option>
+                      <option value={5}>Moderate (5–9 years)</option>
+                      <option value={10}>Experienced (10+ years)</option>
                     </select>
                   </div>
 
@@ -194,15 +225,15 @@ export const VendorProfile = () => {
                     </label>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                       {categories.map((category) => (
-                        <label key={category} className="flex items-center space-x-2">
+                        <label key={category.id} className="flex items-center space-x-2">
                           <input
                             type="checkbox"
-                            checked={serviceCategories.includes(category)}
-                            onChange={() => handleCategoryChange(category)}
+                            checked={serviceCategories.includes(category.id)}
+                            onChange={() => handleCategoryChange(category.id)}
                             className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                           />
                           <span className="text-sm capitalize text-gray-700">
-                            {category.replace("-", " ")}
+                            {category.name}
                           </span>
                         </label>
                       ))}
@@ -222,11 +253,31 @@ export const VendorProfile = () => {
                     />
                   </div>
 
+                  {/* Business Address */}
+                  <div className="border-t pt-6">
+                    <h3 className="text-lg font-semibold text-gray-700 mb-4">Business Address</h3>
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Street Address</label>
+                        <input type="text" value={street} onChange={(e) => setStreet(e.target.value)} placeholder="e.g., 123 Main St" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">State</label>
+                          <input type="text" value={state} onChange={(e) => setState(e.target.value)} placeholder="e.g., Maharashtra" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">ZIP Code</label>
+                          <input type="text" value={zipCode} onChange={(e) => setZipCode(e.target.value)} placeholder="e.g., 400001" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* Service Area */}
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Service Area
-                    </label>
+                  <div className="border-t pt-6">
+                    <h3 className="text-lg font-semibold text-gray-700 mb-4">Service Area</h3>
+                    <p className="text-sm text-gray-500 mb-4">Define where you offer your services.</p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       <div className="relative">
                         <MapPin className="absolute left-3 top-3.5 h-5 w-5 text-gray-400" />
@@ -250,6 +301,26 @@ export const VendorProfile = () => {
                         </select>
                       </div>
                     </div>
+                  </div>
+
+                  {/* Identity Proof Upload */}
+                  <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 mt-6">
+                    <label className="block text-sm font-medium text-blue-900 mb-2">
+                      Identity Proof (Aadhaar / PAN / License)
+                    </label>
+                    <p className="text-xs text-blue-700 mb-3">
+                      Upload a clear image or PDF to get the "Verified" badge.
+                    </p>
+                    <div className="flex items-center space-x-3">
+                      <FileText className="h-6 w-6 text-blue-500" />
+                      <input
+                        type="file"
+                        accept="image/*,application/pdf"
+                        onChange={(e) => setIdentityProof(e.target.files ? e.target.files[0] : null)}
+                        className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200"
+                      />
+                    </div>
+                    {identityProof && <p className="text-xs text-green-600 mt-2">Selected: {identityProof.name}</p>}
                   </div>
 
                   <button

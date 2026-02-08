@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import path from 'path';
 
 // Import routes
 import authRoutes from './routes/auth.js';
@@ -12,6 +13,7 @@ import vendorRoutes from './routes/vendors.js';
 import serviceRoutes from './routes/services.js';
 import bookingRoutes from './routes/bookings.js';
 import adminRoutes from './routes/admin.js';
+import dashboardRoutes from './routes/dashboard.js';
 
 // Import middleware
 import { authenticateToken } from './middleware/auth.js';
@@ -22,8 +24,9 @@ const app = express();
 const server = createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_URL || "http://localhost:5174",
-    methods: ["GET", "POST"]
+    origin: ["http://localhost:5173", "http://localhost:5174", process.env.CLIENT_URL].filter(Boolean),
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
@@ -32,11 +35,20 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/Swayam
 
 // Middleware
 app.use(cors({
-  origin: process.env.CLIENT_URL || "http://localhost:5174",
+  origin: ["http://localhost:5173", "http://localhost:5174", process.env.CLIENT_URL].filter(Boolean),
   credentials: true
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Serve uploaded files
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+// Pass io to routes via request object
+app.use((req, res, next) => {
+  req.io = io;
+  next();
+});
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -45,6 +57,7 @@ app.use('/api/vendors', authenticateToken, vendorRoutes);
 app.use('/api/services', serviceRoutes);
 app.use('/api/bookings', authenticateToken, bookingRoutes);
 app.use('/api/admin',authenticateToken,adminRoutes);
+app.use('/api/dashboard', authenticateToken, dashboardRoutes);
 
 // Socket.io for real-time notifications
 io.on('connection', (socket) => {
