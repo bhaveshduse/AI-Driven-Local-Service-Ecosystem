@@ -1,6 +1,7 @@
 import express from 'express';
 import Service from '../models/Service.js';
 import Vendor from '../models/Vendor.js';
+import mongoose from 'mongoose';
 import User from '../models/User.js';
 import Category from '../models/Category.js';
 import { authenticateToken, authorizeRole } from '../middleware/auth.js';
@@ -28,11 +29,31 @@ const router = express.Router();
 // ------------------------
 router.get('/', async (req, res) => {
   try {
-    const { category, search, lat, lng, radius = 10 } = req.query;
+    const { category, search, lat, lng, radius = 10, city } = req.query;
 
     let pipeline = [];
 
-    // 1️⃣ Join Vendor
+    // 1️⃣ Geospatial search (if lat/lng provided)
+    // This is the most efficient way to filter by location.
+    if (lat && lng) {
+      pipeline.push({
+        $geoNear: {
+          near: {
+            type: 'Point',
+            coordinates: [parseFloat(lng), parseFloat(lat)]
+          },
+          distanceField: 'distance', // Adds a 'distance' field in meters
+          maxDistance: parseFloat(radius) * 1000, // radius in km -> meters
+          query: { isActive: true }, // Pre-filter on indexed fields for efficiency
+          spherical: true
+        }
+      });
+    } else {
+      // If not doing a geo-search, start by matching active services
+      pipeline.push({ $match: { isActive: true } });
+    }
+
+    // 2️⃣ Join Vendor
     pipeline.push({
       $lookup: {
         from: 'vendors',
@@ -43,31 +64,38 @@ router.get('/', async (req, res) => {
     });
     pipeline.push({ $unwind: '$vendorData' });
 
-    // 2️⃣ Filter active services and verified vendors
+    // 3️⃣ Filter for verified vendors
     pipeline.push({
       $match: {
         'vendorData.verificationStatus': 'verified',
-        'isActive': true
       }
     });
 
-    // 3️⃣ Category filter
-    if (category) pipeline.push({ $match: { category } });
-
     // 4️⃣ Search filter
     if (search) {
+      // Using a regex for more flexible, case-insensitive searching across multiple fields.
+      // This is more forgiving than a simple text search and will find partial matches.
+      // For true fuzzy search (handling typos), MongoDB Atlas Search is recommended.
+      const searchRegex = new RegExp(search, 'i');
       pipeline.push({
         $match: {
           $or: [
-            { title: { $regex: search, $options: 'i' } },
-            { description: { $regex: search, $options: 'i' } },
-            { tags: { $in: [new RegExp(search, 'i')] } }
+            { title: searchRegex },
+            { description: searchRegex },
+            { category: searchRegex } // Allows searching by category slug, e.g., "plumb"
           ]
         }
       });
     }
 
-    // 5️⃣ Join User
+    // 5️⃣ Category filter
+    if (category) {
+      // The 'category' from query params is a slug string like 'plumbing', not an ObjectId.
+      // The Service model stores the category as a slug.
+      pipeline.push({ $match: { category: category } });
+    }
+
+    // 6️⃣ Join User
     pipeline.push({
       $lookup: {
         from: 'users',
@@ -78,7 +106,16 @@ router.get('/', async (req, res) => {
     });
     pipeline.push({ $unwind: '$userData' });
 
-    // 6️⃣ Project
+    // 7️⃣ Optional: Filter by city name if lat/lng not provided
+    if (city && (!lat || !lng)) {
+      pipeline.push({
+        $match: {
+          'userData.address.city': { $regex: city, $options: 'i' }
+        }
+      });
+    }
+
+    // 8️⃣ Project final shape
     pipeline.push({
       $project: {
         _id: 1,
@@ -91,6 +128,7 @@ router.get('/', async (req, res) => {
         createdAt: 1,
         pricing: 1,
         price: '$pricing.amount', // frontend convenience
+        distance: { $ifNull: ['$distance', null] }, // Include distance if available
         vendor: {
           _id: '$vendorData._id',
           businessName: '$vendorData.businessName',
@@ -105,21 +143,7 @@ router.get('/', async (req, res) => {
       }
     });
 
-    let services = await Service.aggregate(pipeline).sort({ createdAt: -1 });
-
-    // 7️⃣ Optional location filter
-    if (lat && lng) {
-      const latNum = parseFloat(lat);
-      const lngNum = parseFloat(lng);
-
-      services = services.filter(service => {
-        const coords = service.vendor.user.address?.coordinates;
-        if (!coords || coords.length !== 2) return true; // keep if missing
-        const distance = calculateDistance(latNum, lngNum, coords[1], coords[0]);
-        return distance <= parseFloat(radius);
-      });
-    }
-
+    const services = await Service.aggregate(pipeline).sort({ createdAt: -1 });
     res.json(services);
 
   } catch (error) {
@@ -281,54 +305,20 @@ router.delete('/:id', authenticateToken, authorizeRole(['vendor']), async (req, 
 // Get service categories
 // ------------------------
 router.get('/categories/list', async (req, res) => {
-  try {
-    // Aggregate distinct categories from active services with verified vendors
-    const categories = await Service.aggregate([
-      {
-        $lookup: {
-          from: 'vendors',
-          localField: 'vendor',
-          foreignField: '_id',
-          as: 'vendorData'
-        }
-      },
-      { $unwind: '$vendorData' },
-      {
-        $match: {
-          'isActive': true,
-          'vendorData.verificationStatus': 'verified'
-        }
-      },
-      {
-        $group: {
-          _id: '$category'
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
+    try {
+        // Fetch all active categories from the Category collection, which is the source of truth.
+        // This ensures all available categories are shown, not just those with existing services.
+        const categories = await Category.find({ isActive: { $ne: false } })
+            .sort({ priority: -1, name: 1 });
 
-    res.json(categories.map(cat => ({
-      id: cat._id,
-      name: cat._id.split('-').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
-    })));
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+        res.json(categories.map(cat => ({
+            id: cat.slug, // The frontend uses this ID as the value for filtering, which is the slug.
+            name: cat.name,
+            icon: cat.icon, // Pass icon if available
+        })));
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
-
-// ------------------------
-// Helper: Distance calculation
-// ------------------------
-function calculateDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371; // km
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a =
-    Math.sin(dLat/2) ** 2 +
-    Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) *
-    Math.sin(dLon/2) ** 2;
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-}
 
 export default router;

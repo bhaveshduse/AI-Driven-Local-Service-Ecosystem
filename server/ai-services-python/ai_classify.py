@@ -1,37 +1,63 @@
 import os
+import logging
 import asyncio
 import httpx
 from typing import List, Dict, Any
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from pymongo import MongoClient
 from dotenv import load_dotenv
+from google import genai
 
+# ==========================================
+# Setup
+# ==========================================
 load_dotenv()
 
-# --- Configuration ---
-API_URL = os.getenv("HF_API_URL", "https://api-inference.huggingface.co/models/facebook/bart-large-mnli")
-GEN_API_URL = os.getenv("HF_GEN_API_URL", "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s"
+)
+
 HF_TOKEN = os.getenv("HF_TOKEN")
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "service_db")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "services")
 
 if not HF_TOKEN:
     raise EnvironmentError("Missing HF_TOKEN in .env file.")
 
-HEADERS = {"Authorization": f"Bearer {HF_TOKEN}"}
+if not GEMINI_API_KEY:
+    raise EnvironmentError("Missing GEMINI_API_KEY in .env file.")
 
-# --- Database Setup ---
-try:
-    client = MongoClient(MONGO_URI)
-    db = client[MONGO_DB_NAME]
-    # Collection names
-    LABEL_COL = "classificationlabels"
-except Exception as e:
-    print(f"MongoDB Connection Error: {e}")
+# ==========================================
+# Gemini Setup
+# ==========================================
+# Modern Client Initialization
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-app = FastAPI(title="Service Matcher AI")
+# ==========================================
+# HuggingFace Classification Setup
+# ==========================================
+CLASSIFY_URL = "https://router.huggingface.co/hf-inference/models/facebook/bart-large-mnli"
+
+HEADERS = {
+    "Authorization": f"Bearer {HF_TOKEN}",
+    "Content-Type": "application/json"
+}
+
+# ==========================================
+# Database
+# ==========================================
+db_client = MongoClient(MONGO_URI)
+db = db_client[MONGO_DB_NAME]
+LABEL_COL = "categories"
+
+# ==========================================
+# FastAPI
+# ==========================================
+app = FastAPI(title="AI Service Matcher")
 
 app.add_middleware(
     CORSMiddleware,
@@ -44,109 +70,256 @@ app.add_middleware(
 class ClassificationRequest(BaseModel):
     query: str
 
-# --- Core Logic ---
+class DescriptionRequest(BaseModel):
+    service_title: str
+    category_name: str
 
+# ==========================================
+# Dynamic Labels Loader
+# ==========================================
 async def get_dynamic_labels() -> List[Dict[str, Any]]:
-    """Fetches atomic labels from DB. Each doc should have 'hypothesis_text' and 'display_name'."""
     fallback = [
-        {"hypothesis_text": "Plumbing", "display_name": "Plumbing & Leak Fixes", "slug": "plumbing"},
-        {"hypothesis_text": "Electrical", "display_name": "Electrical & Lighting", "slug": "electrical"},
-        {"hypothesis_text": "Appliances", "display_name": "Appliance Repair", "slug": "appliance-repair"},
-        {"hypothesis_text": "Cleaning", "display_name": "Home Cleaning Services", "slug": "cleaning"},
-        {"hypothesis_text": "HVAC", "display_name": "AC & Heating Repair", "slug": "hvac"},
-        {"hypothesis_text": "Carpentry", "display_name": "Carpentry & Woodwork", "slug": "carpentry"},
-        {"hypothesis_text": "Painting", "display_name": "Painting & Decor", "slug": "painting"},
-        {"hypothesis_text": "Landscaping", "display_name": "Lawn & Landscaping", "slug": "landscaping"},
-        {"hypothesis_text": "Moving", "display_name": "Movers & Packers", "slug": "moving"},
-        {"hypothesis_text": "Pest Control", "display_name": "Pest Control", "slug": "pest-control"},
-        {"hypothesis_text": "Handyman", "display_name": "General Handyman", "slug": "handyman"}
+        {"hypothesis_text": "Plumbing repair service", "display_name": "Plumbing Services", "slug": "plumbing"},
+        {"hypothesis_text": "Electrical installation or repair service", "display_name": "Electrical & Lighting", "slug": "electrical"},
+        {"hypothesis_text": "Home cleaning service", "display_name": "Home Cleaning Services", "slug": "cleaning"},
+        {"hypothesis_text": "Air conditioner or heating repair service", "display_name": "AC & Heating Repair", "slug": "hvac"},
+        {"hypothesis_text": "Furniture repair or carpentry service", "display_name": "Carpentry & Woodwork", "slug": "carpentry"},
+        {"hypothesis_text": "Wall painting or home painting service", "display_name": "Painting Services", "slug": "painting"},
     ]
+
     try:
-        cursor = db[LABEL_COL].find({"isActive": True})
-        labels = list(cursor)
-        return labels if labels else fallback
-    except:
+        # This is a synchronous DB call. To avoid blocking the async event loop,
+        # we run it in a separate thread.
+        def db_call():
+            return list(db[LABEL_COL].find({"isActive": {"$ne": False}}).sort("priority", -1))
+        
+        categories = await asyncio.to_thread(db_call)
+        logging.info(f"Loaded {len(categories)} categories from DB")
+
+        if not categories:
+            logging.warning("No active categories found, using fallback.")
+            return fallback
+
+        formatted = []
+        for cat in categories:
+            name = cat.get("name")
+            if not name:
+                continue
+
+            # Use the new `aiLabel` field for a more precise hypothesis, with a fallback.
+            hypothesis = cat.get("aiLabel")
+            if not hypothesis or not hypothesis.strip():
+                hypothesis = f"This request is about {name.lower()} work and related repair services"
+
+            formatted.append({
+                "hypothesis_text": hypothesis,
+                "display_name": name,
+                "slug": cat.get("slug", name.lower().replace(" ", "-"))
+            })
+
+        return formatted if formatted else fallback
+
+    except Exception as e:
+        logging.error(f"MongoDB Error: {e}")
         return fallback
 
-async def call_classification(client: httpx.AsyncClient, query: str, labels: List[str]) -> Dict:
-    """Zero-shot classification to find the right category."""
-    catch_all = "Unrelated General Inquiry"
-    candidate_labels = labels + [catch_all]
-    payload = {"inputs": query, "parameters": {"candidate_labels": candidate_labels}}
-    
-    try:
-        response = await client.post(API_URL, headers=HEADERS, json=payload, timeout=20.0)
-        result = response.json()
-        
-        # Extract label and score
-        if isinstance(result, dict) and "labels" in result:
-            label = result[0]["labels"][0]
-            score = result[0]["scores"][0]
-            if score < 0.35 or label == catch_all: # Threshold check
-                return {"label": "General", "confidence": round(score*100, 2)}
-            return {"label": label, "confidence": round(score*100, 2)}
-    except Exception as e:
-        print(f"Classification Error: {e}")
-    return {"label": "General", "confidence": 0}
+# ==========================================
+# Classification (BART MNLI via HuggingFace)
+# ==========================================
+async def call_classification(http_client: httpx.AsyncClient, query: str, labels: List[str]):
+    logging.info(f"Classifying query: '{query}'")
 
-async def call_diagnosis(client: httpx.AsyncClient, query: str) -> str:
-    """Mistral-based expert advice for immediate value."""
-    system_prompt = (
-        "ACT AS: Home Service Expert. Provide 1 safety tip and 2 triage questions for the user's issue. "
-        "Keep it under 80 words. Use Markdown."
-    )
-    full_prompt = f"<s>[INST] {system_prompt} \nUser Issue: {query} [/INST]</s>"
-    
     payload = {
-        "inputs": full_prompt,
-        "parameters": {"max_new_tokens": 150, "temperature": 0.7}
+        "inputs": query,
+        "parameters": {
+            "candidate_labels": labels,
+            "hypothesis_template": "The user needs {}."
+        }
     }
+
     try:
-        response = await client.post(GEN_API_URL, headers=HEADERS, json=payload, timeout=20.0)
+        response = await http_client.post(CLASSIFY_URL, headers=HEADERS, json=payload, timeout=20.0)
+        response.raise_for_status()
         result = response.json()
-        if isinstance(result, list): return result[0].get("generated_text", "")
-        return result.get("generated_text", "Expert advice is currently unavailable.")
+
+        if isinstance(result, dict) and "labels" in result:
+            label = result["labels"][0]
+            score = result["scores"][0]
+            confidence = round(score * 100, 2)
+
+            if confidence < 50:
+                return {"label": "General", "confidence": confidence}
+
+            return {"label": label, "confidence": confidence}
+
+        return {"label": "General", "confidence": 0}
+
     except Exception as e:
-        return "Please stay safe. We are matching you with a professional now."
+        logging.error(f"Classification Error: {e}")
+        return {"label": "General", "confidence": 0}
 
-# --- API Endpoints ---
+# ==========================================
+# Classification Fallback (Gemini API)
+# ==========================================
+async def classify_with_gemini(query: str, labels: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Uses Gemini as a fallback for more robust classification."""
+    try:
+        label_names = [item['display_name'] for item in labels]
+        logging.info(f"Using Gemini for classification fallback. Categories: {label_names}")
 
+        prompt = f"""
+        Analyze the following user request and classify it into ONE of the following service categories.
+        Respond with ONLY the category name that is the best fit. If no category is a good fit, respond with "General Home Maintenance".
+
+        # Categories:
+        {', '.join(label_names)}
+
+        # User Request:
+        "{query}"
+
+        # Your Answer (one category name only):
+        """
+
+        response = await client.aio.models.generate_content(
+            model="gemini-flash-latest",
+            contents=prompt,
+        )
+
+        if response and response.text:
+            classified_label = response.text.strip()
+            logging.info(f"Gemini classification result: '{classified_label}'")
+            # Find the original label data based on the classified display_name
+            for item in labels:
+                if item['display_name'] == classified_label:
+                    return {
+                        "label": item['hypothesis_text'], # Return hypothesis_text to match existing flow
+                        "confidence": 99.0 # Assign high confidence
+                    }
+            logging.warning(f"Gemini returned a label not in the provided list: '{classified_label}'")
+
+        return {"label": "General", "confidence": 0}
+
+    except Exception as e:
+        logging.error(f"Gemini classification error: {e}")
+        return {"label": "General", "confidence": 0}
+
+# ==========================================
+# Expert Advice Generator (Gemini API)
+# ==========================================
+async def generate_expert_advice(service_name: str, user_query: str) -> str:
+    try:
+        logging.info(f"Generating expert advice using Gemini for: {service_name}")
+
+        prompt = f"""
+        # ROLE
+        You are a senior {service_name} expert. Speak like a friendly, helpful professional on a chat app—warm, direct, and non-robotic.
+
+        # TASK
+        Respond to: {user_query}
+
+        # CONTENT RULES
+        1. START: Acknowledge the trouble with a quick, empathetic opening (e.g., "I know how annoying a leaky tap can be!").
+        2. THE CAUSE: Give ONE specific, likely reason in plain English.
+        3. THE CHECK: Suggest exactly ONE "eyes-only" check that requires zero tools or risk.
+        4. THE VENDOR VALUE: Briefly mention one risk of DIY (e.g., "Tinkering with this without the right sensors can actually blow the fuse").
+        5. BOOKING PUSH: Recommend 1-2 specific service names (e.g., 'AC Deep Clean') and a friendly nudge to book a verified vendor today for a longterm repair.
+
+        # STYLE
+        - Keep it under 100 words.
+        - Use "I" and "You." 
+        - No bulleted lists or "As an AI..."
+        - No step-by-step repair guides.
+
+        """
+
+
+        response = await client.aio.models.generate_content(
+            model="gemini-flash-latest",
+            contents=prompt,
+        )
+
+        if response and response.text:
+            return response.text.strip()
+
+        return "Please consult a certified professional for assistance."
+
+    except Exception as e:
+        logging.error(f"Gemini Error: {e}")
+        return "Please consult a certified professional for assistance."
+
+# ==========================================
+# AI Service Description Generator
+# ==========================================
+async def generate_service_description(service_title: str, category_name: str) -> str:
+    """Generates a compelling service description using Gemini."""
+    try:
+        logging.info(f"Generating service description for: '{service_title}'")
+        prompt = f"""
+        As a marketing expert, write a compelling and professional service description for a local service provider.
+
+        Service Name: "{service_title}"
+        Category: "{category_name}"
+
+        The description should be concise (2-3 sentences), highlight the key benefits for the customer, and encourage them to book the service. It should be ready to be displayed on a service booking website.
+        """
+        response = await client.aio.models.generate_content(
+            model="gemini-flash-latest",
+            contents=prompt,
+        )
+        return response.text.strip() if response.text else "Could not generate a description. Please write one manually."
+    except Exception as e:
+        logging.error(f"Service Description Generation Error: {e}")
+        return "Could not generate a description. Please write one manually."
+
+# ==========================================
+# API Endpoint
+# ==========================================
 @app.post("/recommend")
 async def recommend_service(request: ClassificationRequest):
-    """
-    Main Endpoint: Performs classification AND diagnosis in parallel.
-    This provides the 'Recommended Service' AND the 'Expert Advice' instantly.
-    """
+
     label_data = await get_dynamic_labels()
     hypothesis_list = [item["hypothesis_text"] for item in label_data]
 
-    async with httpx.AsyncClient() as client:
-        # Parallel Execution
-        classification_task = call_classification(client, request.query, hypothesis_list)
-        diagnosis_task = call_diagnosis(client, request.query)
-        
-        classification_res, advice = await asyncio.gather(classification_task, diagnosis_task)
+    async with httpx.AsyncClient() as http_client:
+        classification_res = await call_classification(http_client, request.query, hypothesis_list)
 
-    # Match the internal hypothesis back to a pretty Display Name
+    # Add fallback to Gemini if confidence is low or classification is "General"
+    if classification_res["label"] == "General":
+        logging.warning("Primary classification failed or had low confidence. Attempting fallback with Gemini.")
+        classification_res = await classify_with_gemini(request.query, label_data)
+
     display_name = "General Home Maintenance"
     slug = "general"
+
     for item in label_data:
         if item["hypothesis_text"] == classification_res["label"]:
             display_name = item.get("display_name", display_name)
             slug = item.get("slug", slug)
+            break
+
+    expert_advice = await generate_expert_advice(display_name, request.query)
 
     return {
         "recommended_service": display_name,
         "slug": slug,
         "confidence": classification_res["confidence"],
-        "expert_advice": advice,
-        "action_required": "We are searching for vendors in your area."
+        "expert_advice": expert_advice,
+        "status": "matching_vendors"
     }
+
+@app.post("/generate-description")
+async def generate_description_endpoint(request: DescriptionRequest):
+    description = await generate_service_description(request.service_title, request.category_name)
+    return {"description": description}
 
 @app.get("/health")
 def health():
     return {"status": "online"}
 
+# ==========================================
+# Run
+# ==========================================
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    logging.info("Starting AI Service Matcher API")
+    uvicorn.run("ai_classify:app", host="0.0.0.0", port=8001, reload=True)

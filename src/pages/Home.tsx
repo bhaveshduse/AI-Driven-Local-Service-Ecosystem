@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Search, MapPin, Star, Shield, Clock, Users, Sparkles } from 'lucide-react';
+import { Search, MapPin, Star, Shield, Clock, Users, Sparkles, LocateFixed } from 'lucide-react';
 import AIClassifier from '../components/AIClassifier';
 import { useAuth } from '../contexts/AuthContext';
+import { toast } from 'react-hot-toast';
 
 export const Home = () => {
   const { user } = useAuth();
@@ -10,6 +11,8 @@ export const Home = () => {
   const location = useLocation();
   const [activeTab, setActiveTab] = useState<'manual' | 'ai'>('manual');
   const [manualQuery, setManualQuery] = useState('');
+  const [locationQuery, setLocationQuery] = useState('');
+  const [coordinates, setCoordinates] = useState<{ lat: number; lng: number } | null>(null);
 
   const categories = [
     { id: 'plumbing', name: 'Plumbing', icon: '🔧', color: 'bg-blue-100 text-blue-600' },
@@ -57,11 +60,91 @@ export const Home = () => {
   }, [location.state]);
 
   const handleManualSearch = () => {
+    const params = new URLSearchParams();
+    if (manualQuery) params.set('search', manualQuery);
+
+    // Prioritize coordinates over text location
+    if (coordinates) {
+      params.set('lat', coordinates.lat.toString());
+      params.set('lng', coordinates.lng.toString());
+    } else if (locationQuery) {
+      params.set('location', locationQuery);
+    }
+
+    const queryString = params.toString();
+
     if (!user) {
-      navigate('/login', { state: { searchQuery: manualQuery } });
+      // Pass the full intended destination to the login page
+      navigate('/login', { state: { from: { pathname: `/services?${queryString}` } } });
       return;
     }
-    navigate(`/services?search=${encodeURIComponent(manualQuery)}`);
+    navigate(`/services?${queryString}`);
+  };
+
+  const handleUseMyLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error("Geolocation is not supported by your browser.");
+      return;
+    }
+
+    toast.loading("Getting your location...");
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        toast.dismiss(); // Dismiss initial loading toast
+        toast.loading("Finding your city...");
+
+        try {
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`
+          );
+          if (!response.ok) {
+            throw new Error("Failed to fetch location data");
+          }
+          const data = await response.json();
+          const city =
+            data.address?.city ||
+            data.address?.town ||
+            data.address?.village;
+
+          toast.dismiss();
+          if (city) {
+            toast.success(`Location set to ${city}`);
+            setLocationQuery(city);
+            // Clear coordinates to ensure the search uses the city name, as requested.
+            setCoordinates(null);
+          } else {
+            toast.error("Could not determine your city from your location.");
+          }
+        } catch (error) {
+          toast.dismiss();
+          toast.error("Could not determine your city. Please enter it manually.");
+          console.error("Reverse geocoding error:", error);
+        }
+      },
+      (error) => {
+        toast.dismiss();
+        switch (error.code) {
+          case error.PERMISSION_DENIED:
+            toast.error("Location access denied. Please enable it in your browser settings.");
+            break;
+          case error.POSITION_UNAVAILABLE:
+            toast.error("Location information is unavailable at the moment.");
+            break;
+          case error.TIMEOUT:
+            toast.error("The request to get your location timed out.");
+            break;
+          default:
+            toast.error("An unknown error occurred while fetching location.");
+            break;
+        }
+      }
+    );
+  };
+
+  const handleLocationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setLocationQuery(e.target.value);
+    setCoordinates(null);
   };
 
   return (
@@ -88,8 +171,7 @@ export const Home = () => {
             </p>
             
             {/* Search Tabs */}
-            {user && (
-            <div className="flex justify-center mb-6">
+            <div className="flex justify-center mb-6 animate-in fade-in slide-in-from-bottom-10 duration-700 delay-300">
                 <div className="bg-white/10 backdrop-blur-md p-1 rounded-xl inline-flex border border-white/20">
                   <button
                     onClick={() => setActiveTab('manual')}
@@ -114,7 +196,6 @@ export const Home = () => {
                   </button>
                 </div>
               </div>
-            )}
 
             {/* Search Content */}
             {activeTab === 'manual' ? (
@@ -130,17 +211,25 @@ export const Home = () => {
                       className="w-full pl-12 pr-4 py-3 text-gray-800 bg-gray-50 rounded-lg border-0 focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
                     />
                   </div>
-                  <div className="flex-1 relative">
-                    <MapPin className="absolute left-4 top-3.5 h-5 w-5 text-gray-400" />
-                    <input
-                      type="text"
-                      placeholder="Enter your location"
-                      className="w-full pl-12 pr-4 py-3 text-gray-800 bg-gray-50 rounded-lg border-0 focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
-                    />
+                  <div className="flex-1 flex gap-2">
+                    <div className="flex-1 relative">
+                      <MapPin className="absolute left-4 top-3.5 h-5 w-5 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder="Enter your location"
+                        value={locationQuery}
+                        onChange={handleLocationChange}
+                        className="w-full pl-12 pr-4 py-3 text-gray-800 bg-gray-50 rounded-lg border-0 focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
+                      />
+                    </div>
+                    <button onClick={handleUseMyLocation} title="Use my current location" className="p-3 bg-gray-100 border-0 rounded-lg hover:bg-gray-200 text-gray-600 flex-shrink-0">
+                      <LocateFixed className="h-5 w-5" />
+                    </button>
                   </div>
                   <button
                     onClick={handleManualSearch}
-                    className="bg-blue-600 text-white px-8 py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+                    disabled={!manualQuery && !locationQuery}
+                    className="bg-blue-600 text-white px-8 py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 disabled:bg-gray-400 disabled:cursor-not-allowed"
                   >
                     Search
                   </button>
