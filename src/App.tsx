@@ -4,26 +4,29 @@ import { AuthProvider } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { Navbar } from './components/Navbar';
 import { Home } from './pages/Home';
-import { Login } from './pages/Login';
-import ForgotPassword from "./pages/ForgotPassword";
-import ResetPassword from "./pages/ResetPassword";
-import { Register } from './pages/Register';
-import { Services } from './pages/Services';
-import { ServiceDetail } from './pages/ServiceDetail';
+import { Login } from './features/auth/Login';
+import ForgotPassword from "./features/auth/ForgotPassword";
+import ResetPassword from "./features/auth/ResetPassword";
+import { Register } from './features/auth/Register';
+import { Services } from './features/services/Services';
+import { ServiceDetail } from './features/services/ServiceDetail';
 import { Dashboard } from './pages/Dashboard';
-import { VendorDashboard } from './pages/VendorDashboard';
-import { AdminDashboard } from './pages/AdminDashboard';
-import { BookService } from './pages/BookService';
-import { BookingDetail } from './pages/BookingDetail';
-import { AdminBookings } from './pages/AdminBookings';
-import { MyBookings } from './pages/MyBookings';
-import { VendorProfile } from './pages/VendorProfile';
-import VendorManagement from "./pages/VendorManagement";
-import UserManagement from "./pages/UserManagement";
-import CategoryManagement from "./pages/CategoryManagement";
-import { AdminAnalytics } from './pages/AdminAnalytics';
-import { AdminDisputes } from './pages/AdminDisputes';
-
+import { VendorDashboard } from './features/vendor/VendorDashboard';
+import { AdminDashboard } from './features/admin/AdminDashboard';
+import { BookService } from './features/services/BookService';
+import { BookingDetail } from './features/bookings/BookingDetail';
+import { AdminBookings } from './features/admin/AdminBookings';
+import { MyBookings } from './features/bookings/MyBookings';
+import { VendorProfile } from './features/vendor/VendorProfile';
+import VendorManagement from "./features/admin/VendorManagement";
+import UserManagement from "./features/admin/UserManagement";
+import { AdminAnalytics } from './features/admin/AdminAnalytics';
+import { AdminDisputes } from './features/admin/AdminDisputes';
+import { VendorServices } from './features/vendor/VendorServices';
+import { EditService } from './features/services/EditService';
+import { CatalogManagement } from './features/admin/CatalogManagement';
+import AccountSettingsPage from './pages/AccountSettingsPage';
+import ProfilePage from './components/ProfilePage';
 
 function App() {
   return (
@@ -55,6 +58,26 @@ function App() {
                   <VendorDashboard />
                 </ProtectedRoute>
               } />
+              <Route path="/vendor/services" element={
+                <ProtectedRoute allowedRoles={['vendor']}>
+                  <VendorServices />
+                </ProtectedRoute>
+              } />
+              <Route path="/vendor/profile" element={
+                <ProtectedRoute allowedRoles={['vendor']}>
+                  <VendorProfile />
+                </ProtectedRoute>
+              } />
+              <Route path="/vendor/services/new" element={
+                <ProtectedRoute allowedRoles={['vendor']}>
+                  <EditService />
+                </ProtectedRoute>
+              } />
+              <Route path="/vendor/services/edit/:id" element={
+                <ProtectedRoute allowedRoles={['vendor']}>
+                  <EditService />
+                </ProtectedRoute>
+              } />
               <Route path="/admin-dashboard" element={
                 <ProtectedRoute allowedRoles={['admin']}>
                   <AdminDashboard />
@@ -80,11 +103,6 @@ function App() {
                   <UserManagement />
                 </ProtectedRoute>
               } />
-              <Route path="/admin/categories" element={
-                <ProtectedRoute allowedRoles={['admin']}>
-                  <CategoryManagement />
-                </ProtectedRoute>
-              } />
               <Route path="/admin/bookings" element={
                 <ProtectedRoute allowedRoles={['admin']}>
                   <AdminBookings />
@@ -101,9 +119,19 @@ function App() {
                   <BookingDetail />
                 </ProtectedRoute>
               } />
-              <Route path="/vendor-profile" element={
-                <ProtectedRoute allowedRoles={['vendor']}>
-                  <VendorProfile />
+              <Route path="/admin/catalog/*" element={
+                <ProtectedRoute allowedRoles={['admin']}>
+                  <CatalogManagement />
+                </ProtectedRoute>
+              } />
+              <Route path="/account-settings" element={
+                <ProtectedRoute>
+                  <AccountSettingsPage />
+                </ProtectedRoute>
+              } />
+              <Route path="/profile" element={
+                <ProtectedRoute allowedRoles={['customer']}>
+                  <ProfilePage />
                 </ProtectedRoute>
               } />
             </Routes>

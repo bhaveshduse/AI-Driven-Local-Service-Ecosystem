@@ -1,9 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Search, MapPin, Star, Shield, Clock, Users, Sparkles, LocateFixed } from 'lucide-react';
-import AIClassifier from '../components/AIClassifier';
+import { Search, MapPin, Star, Shield, Clock, Users, Sparkles, LocateFixed, Loader2 } from 'lucide-react';
+import AIClassifier from '../features/services/AIClassifier';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
+import { useGeolocation } from '../hooks/useGeolocation';
+import { useDebounce } from '../hooks/useDebounce';
 
 export const Home = () => {
   const { user } = useAuth();
@@ -14,6 +16,13 @@ export const Home = () => {
   const [locationQuery, setLocationQuery] = useState('');
   const [coordinates, setCoordinates] = useState<{ lat: number; lng: number } | null>(null);
 
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [isSuggestionsLoading, setIsSuggestionsLoading] = useState(false);
+  const searchInputRef = useRef<HTMLDivElement>(null);
+
+  const { isLoading: isLocating, getLocation } = useGeolocation();
+
+  const debouncedManualQuery = useDebounce(manualQuery, 300);
   const categories = [
     { id: 'plumbing', name: 'Plumbing', icon: '🔧', color: 'bg-blue-100 text-blue-600' },
     { id: 'electrical', name: 'Electrical', icon: '⚡', color: 'bg-yellow-100 text-yellow-600' },
@@ -59,6 +68,45 @@ export const Home = () => {
     }
   }, [location.state]);
 
+  // Effect to fetch search suggestions
+  useEffect(() => {
+    if (debouncedManualQuery.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+
+    const fetchSuggestions = async () => {
+      setIsSuggestionsLoading(true);
+      try {
+        const response = await fetch(`/api/services/suggestions?q=${debouncedManualQuery}`);
+        if (!response.ok) throw new Error('Network response was not ok');
+        const data = await response.json();
+        setSuggestions(data);
+      } catch (error) {
+        console.error('Failed to fetch search suggestions:', error);
+        setSuggestions([]);
+      } finally {
+        setIsSuggestionsLoading(false);
+      }
+    };
+
+    fetchSuggestions();
+  }, [debouncedManualQuery]);
+
+  // Effect to handle clicks outside the search input to close suggestions
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (searchInputRef.current && !searchInputRef.current.contains(event.target as Node)) {
+        setSuggestions([]);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
   const handleManualSearch = () => {
     const params = new URLSearchParams();
     if (manualQuery) params.set('search', manualQuery);
@@ -81,70 +129,51 @@ export const Home = () => {
     navigate(`/services?${queryString}`);
   };
 
-  const handleUseMyLocation = () => {
-    if (!navigator.geolocation) {
-      toast.error("Geolocation is not supported by your browser.");
-      return;
-    }
+  const handleUseMyLocation = async () => {
+    const toastId = toast.loading("Getting your location...");
 
-    toast.loading("Getting your location...");
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude } = position.coords;
-        toast.dismiss(); // Dismiss initial loading toast
-        toast.loading("Finding your city...");
+    try {
+      const { coordinates: newCoords, city } = await getLocation();
 
-        try {
-          const response = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`
-          );
-          if (!response.ok) {
-            throw new Error("Failed to fetch location data");
-          }
-          const data = await response.json();
-          const city =
-            data.address?.city ||
-            data.address?.town ||
-            data.address?.village;
+      setCoordinates(newCoords);
 
-          toast.dismiss();
-          if (city) {
-            toast.success(`Location set to ${city}`);
-            setLocationQuery(city);
-            // Clear coordinates to ensure the search uses the city name, as requested.
-            setCoordinates(null);
-          } else {
-            toast.error("Could not determine your city from your location.");
-          }
-        } catch (error) {
-          toast.dismiss();
-          toast.error("Could not determine your city. Please enter it manually.");
-          console.error("Reverse geocoding error:", error);
-        }
-      },
-      (error) => {
-        toast.dismiss();
+      if (city) {
+        setLocationQuery(city);
+        toast.success(`Location set to ${city}`, { id: toastId });
+      } else {
+        setLocationQuery('Current Location');
+        toast.success('Using your current coordinates.', { id: toastId });
+      }
+    } catch (error: any) {
+      let errorMsg = "An unknown error occurred while fetching location.";
+      if (error instanceof GeolocationPositionError) {
         switch (error.code) {
           case error.PERMISSION_DENIED:
-            toast.error("Location access denied. Please enable it in your browser settings.");
+            errorMsg = "Location access denied. Please enable it in your browser settings.";
             break;
           case error.POSITION_UNAVAILABLE:
-            toast.error("Location information is unavailable at the moment.");
+            errorMsg = "Location information is unavailable at the moment.";
             break;
           case error.TIMEOUT:
-            toast.error("The request to get your location timed out.");
-            break;
-          default:
-            toast.error("An unknown error occurred while fetching location.");
+            errorMsg = "The request to get your location timed out.";
             break;
         }
+      } else {
+        errorMsg = error.message;
       }
-    );
+      toast.error(errorMsg, { id: toastId });
+      console.error('Geolocation error:', error);
+    }
   };
 
   const handleLocationChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setLocationQuery(e.target.value);
     setCoordinates(null);
+  };
+
+  const handleSuggestionClick = (suggestion: string) => {
+    setManualQuery(suggestion);
+    setSuggestions([]);
   };
 
   return (
@@ -201,15 +230,33 @@ export const Home = () => {
             {activeTab === 'manual' ? (
               <div className="bg-white/95 backdrop-blur-sm rounded-2xl p-4 max-w-4xl mx-auto shadow-2xl mb-8 animate-in fade-in slide-in-from-bottom-4 duration-500 border border-white/10">
                 <div className="flex flex-col md:flex-row gap-4">
-                  <div className="flex-1 relative">
+                  <div className="flex-1 relative" ref={searchInputRef}>
                     <Search className="absolute left-4 top-3.5 h-5 w-5 text-gray-400" />
                     <input
                       type="text"
                       placeholder="What service do you need?"
                       value={manualQuery}
                       onChange={(e) => setManualQuery(e.target.value)}
+                      autoComplete="off"
                       className="w-full pl-12 pr-4 py-3 text-gray-800 bg-gray-50 rounded-lg border-0 focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
                     />
+                    {(suggestions.length > 0 || isSuggestionsLoading) && (
+                      <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-lg shadow-lg border z-10 text-left max-h-60 overflow-y-auto">
+                        {isSuggestionsLoading && <div className="p-3 text-gray-500">Searching...</div>}
+                        {!isSuggestionsLoading && suggestions.map((suggestion, index) => (
+                          <div
+                            key={index}
+                            onClick={() => handleSuggestionClick(suggestion)}
+                            className="p-3 hover:bg-gray-100 cursor-pointer text-gray-800"
+                          >
+                            {suggestion}
+                          </div>
+                        ))}
+                        {!isSuggestionsLoading && suggestions.length === 0 && debouncedManualQuery.length > 1 && (
+                           <div className="p-3 text-gray-500">No suggestions found.</div>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="flex-1 flex gap-2">
                     <div className="flex-1 relative">
@@ -222,8 +269,12 @@ export const Home = () => {
                         className="w-full pl-12 pr-4 py-3 text-gray-800 bg-gray-50 rounded-lg border-0 focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
                       />
                     </div>
-                    <button onClick={handleUseMyLocation} title="Use my current location" className="p-3 bg-gray-100 border-0 rounded-lg hover:bg-gray-200 text-gray-600 flex-shrink-0">
-                      <LocateFixed className="h-5 w-5" />
+                    <button onClick={handleUseMyLocation} disabled={isLocating} title="Use Current Location" className="p-3 bg-gray-100 border-0 rounded-lg hover:bg-gray-200 text-gray-600 flex-shrink-0 disabled:cursor-wait disabled:opacity-70">
+                      {isLocating ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        <LocateFixed className="h-5 w-5" />
+                      )}
                     </button>
                   </div>
                   <button

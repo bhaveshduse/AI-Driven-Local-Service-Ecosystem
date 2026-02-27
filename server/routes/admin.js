@@ -1,6 +1,6 @@
 import express from 'express';
 // Import controller functions from the userController file
-import { getUsers, updateUser, deleteUser } from '../userController.js';
+import { getUsers, updateUser, deleteUser } from '../utils/userController.js';
 import User from '../models/User.js';
 import Service from '../models/Service.js';
 import Vendor from '../models/Vendor.js';
@@ -8,30 +8,14 @@ import Category from '../models/Category.js';
 import Booking from '../models/Booking.js';
 import { authorizeRole } from '../middleware/auth.js';
 import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
 
 const router = express.Router();
 
-// Configure Multer for category images
-const categoryImageStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadDir = 'uploads/categories';
-    if (!fs.existsSync('uploads/')) {
-      fs.mkdirSync('uploads/');
-    }
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir);
-    }
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    cb(null, `category-${req.params.id}-${Date.now()}${path.extname(file.originalname)}`);
-  }
-});
-const uploadCategoryImage = multer({ storage: categoryImageStorage });
+const upload = multer();
+
 // Default images for services
-const DEFAULT_IMAGE = ['https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d1?auto=format&fit=crop&q=80&w=800'];
+const PLACEHOLDER_IMAGE_URL = 'https://placehold.co/600x400?text=Service+Image';
+const DEFAULT_IMAGE = [PLACEHOLDER_IMAGE_URL];
 
 // ===============================
 // Analytics (Unchanged)
@@ -64,13 +48,44 @@ router.get('/analytics', authorizeRole(['admin']), async (req, res) => {
       { $limit: 12 }
     ]);
 
+    const revenueByCategory = await Booking.aggregate([
+      { $match: { status: 'completed' } },
+      {
+        $lookup: {
+          from: 'services',
+          localField: 'service',
+          foreignField: '_id',
+          as: 'serviceDetails'
+        }
+      },
+      { $unwind: '$serviceDetails' },
+      {
+        $group: {
+          _id: '$serviceDetails.category',
+          totalRevenue: { $sum: '$price.amount' },
+          bookingCount: { $sum: 1 }
+        }
+      },
+      { $sort: { totalRevenue: -1 } },
+      { $limit: 10 }, // Get top 10 categories
+      { $project: { _id: 0, category: '$_id', totalRevenue: 1, bookingCount: 1 } }
+    ]);
+
+    const recentReviews = await Booking.find({ 'rating.review': { $exists: true, $ne: '' } })
+      .sort({ 'rating.date': -1 })
+      .limit(5)
+      .populate('customer', 'name')
+      .select('rating customer');
+
     res.json({
       totalUsers,
       totalVendors,
       totalBookings,
       completedBookings,
       totalRevenue: totalRevenue[0]?.total || 0,
-      monthlyBookings
+      monthlyBookings,
+      revenueByCategory,
+      recentReviews
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -119,94 +134,76 @@ router.delete('/users/:id', authorizeRole(['admin']), deleteUser);
 // ===============================
 router.get('/vendors', authorizeRole(['admin']), async (req, res) => {
   try {
-    const { status, page = 1, limit = 20 } = req.query;
-    let query = {};
-    
+    const { status, search, page = 1, limit = 20 } = req.query;
+    const pageNum = parseInt(page, 10);
+    const limitNum = parseInt(limit, 10);
+    const skip = (pageNum - 1) * limitNum;
+
+    let pipeline = [];
+
+    // Initial match for status
     if (status && status !== 'all') {
-      query.verificationStatus = status;
+      pipeline.push({ $match: { verificationStatus: status } });
     }
 
-    const vendors = await Vendor.find(query)
-      .populate('user', 'name email phone createdAt isActive isVerified')
-      .sort({ createdAt: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+    // Join with users to search on user fields
+    pipeline.push({
+      $lookup: {
+        from: 'users',
+        localField: 'user',
+        foreignField: '_id',
+        as: 'userData'
+      }
+    });
+    pipeline.push({ $unwind: '$userData' });
 
-    const total = await Vendor.countDocuments(query);
+    // Add search stage
+    if (search) {
+      const searchWords = search.split(' ').filter(word => word.length > 0);
+      const searchConditions = searchWords.map(word => {
+        const searchRegex = new RegExp(word, 'i');
+        return {
+          $or: [
+            { businessName: searchRegex },
+            { 'userData.name': searchRegex },
+            { 'userData.email': searchRegex },
+            { 'userData.phone': searchRegex }
+          ]
+        };
+      });
+      if (searchConditions.length > 0) {
+        pipeline.push({ $match: { $and: searchConditions } });
+      }
+    }
+
+    // Facet for pagination and results
+    const facet = {
+      $facet: {
+        vendors: [
+          { $sort: { createdAt: -1 } },
+          { $skip: skip },
+          { $limit: limitNum },
+          { $project: {
+              _id: 1, businessName: 1, verificationStatus: 1, createdAt: 1, serviceCategories: 1,
+              user: { _id: '$userData._id', name: '$userData.name', email: '$userData.email', phone: '$userData.phone', createdAt: '$userData.createdAt', isActive: '$userData.isActive', isVerified: '$userData.isVerified' }
+          }}
+        ],
+        total: [{ $count: 'count' }]
+      }
+    };
+    pipeline.push(facet);
+
+    const result = await Vendor.aggregate(pipeline);
+    const vendors = result[0].vendors;
+    const total = result[0].total[0] ? result[0].total[0].count : 0;
 
     res.json({
       vendors,
-      totalPages: Math.ceil(total / limit),
-      currentPage: page
+      totalPages: Math.ceil(total / limitNum),
+      currentPage: pageNum
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
-  }
-});
-
-// ===============================
-// Category Management
-// ===============================
-
-// Get all categories (Seed if empty)
-router.get('/categories', authorizeRole(['admin']), async (req, res) => {
-  try {
-    let categories = await Category.find().sort({ name: 1 });
-
-    if (categories.length === 0) {
-      const seedData = [
-        { name: 'Plumbing', slug: 'plumbing', image: 'https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d1?auto=format&fit=crop&q=80&w=800' },
-        { name: 'Electrical', slug: 'electrical', image: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&q=80&w=800' },
-        { name: 'Cleaning', slug: 'cleaning', image: 'https://images.unsplash.com/photo-1584622050111-993a426fbf0a?auto=format&fit=crop&q=80&w=800' },
-        { name: 'Painting', slug: 'painting', image: 'https://images.unsplash.com/photo-1562259949-e8e7689d7828?auto=format&fit=crop&q=80&w=800' },
-        { name: 'Carpentry', slug: 'carpentry', image: 'https://images.unsplash.com/photo-1533090161767-e6ffed986c88?auto=format&fit=crop&q=80&w=800' },
-        { name: 'Appliance Repair', slug: 'appliance-repair', image: 'https://images.unsplash.com/photo-1581092921461-eab62e97a782?auto=format&fit=crop&q=80&w=800' },
-        { name: 'HVAC', slug: 'hvac', image: 'https://images.unsplash.com/photo-1581094794329-c8112a89af12?auto=format&fit=crop&q=80&w=800' },
-        { name: 'Landscaping', slug: 'landscaping', image: 'https://images.unsplash.com/photo-1558904541-efa843a96f01?auto=format&fit=crop&q=80&w=800' },
-        { name: 'Moving', slug: 'moving', image: 'https://images.unsplash.com/photo-1600518464441-9154a4dea21b?auto=format&fit=crop&q=80&w=800' },
-        { name: 'Pest Control', slug: 'pest-control', image: 'https://images.unsplash.com/photo-1587574293340-e0011c4e8ecf?auto=format&fit=crop&q=80&w=800' },
-        { name: 'Handyman', slug: 'handyman', image: 'https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d1?auto=format&fit=crop&q=80&w=800' }
-      ];
-      categories = await Category.insertMany(seedData);
-    }
-
-    res.json(categories);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Update a category image
-router.put('/categories/:id', authorizeRole(['admin']), uploadCategoryImage.single('imageFile'), async (req, res) => {
-  try {
-    let imageUrl;
-
-    if (req.file) {
-      // If a file was uploaded, use its path
-      imageUrl = req.file.path.replace(/\\/g, '/');
-    } else if (req.body.image && typeof req.body.image === 'string' && req.body.image.trim() !== '') {
-      // If a URL string was provided in the body
-      imageUrl = req.body.image.trim();
-    } else {
-      return res.status(400).json({ error: 'An image file or a non-empty image URL string is required.' });
-    }
-    
-    const category = await Category.findByIdAndUpdate(
-      req.params.id,
-      { image: imageUrl },
-      { new: true, runValidators: true } // runValidators ensures schema rules are checked
-    );
-
-    if (!category) {
-      return res.status(404).json({ error: 'Category not found' });
-    }
-    res.json(category);
-  } catch (error) {
-    if (error.name === 'CastError') {
-      return res.status(400).json({ error: 'Invalid category ID format.' });
-    }
-    console.error('Error updating category:', error);
-    res.status(500).json({ error: 'Server error while updating category.' });
   }
 });
 
@@ -271,16 +268,12 @@ router.patch('/vendors/:id/verify', authorizeRole(['admin']), async (req, res) =
       const existingServices = await Service.find({ vendor: vendor._id });
       
       if (existingServices.length === 0 && vendor.serviceCategories?.length > 0) {
-        // Fetch category images from DB
-        const categories = await Category.find({ slug: { $in: vendor.serviceCategories } });
-        const categoryMap = categories.reduce((acc, c) => ({ ...acc, [c.slug]: c.image }), {});
-
         const defaultServices = vendor.serviceCategories.map(cat => ({
           title: `${cat.charAt(0).toUpperCase() + cat.slice(1)} Service`,
           description: `Professional ${cat.replace('-', ' ')} service by ${vendor.businessName}`,
           category: cat,
           pricing: { type: 'fixed', amount: 500, unit: 'per job' },
-          images: categoryMap[cat] ? [categoryMap[cat]] : DEFAULT_IMAGE,
+          images: DEFAULT_IMAGE,
           vendor: vendor._id,
           isActive: true,
         }));
@@ -289,6 +282,13 @@ router.patch('/vendors/:id/verify', authorizeRole(['admin']), async (req, res) =
         vendor.services = insertedServices.map(s => s._id);
         await vendor.save();
         newServices = insertedServices;
+
+        // Log the created services and their image URLs
+        insertedServices.forEach(service => {
+          console.log(
+            `[ADMIN VERIFY LOG] Created default service "${service.title}" for vendor "${vendor.businessName}" with image URL: ${service.images[0]}`
+          );
+        });
 
         // Emit real-time event via Socket.IO
         const serviceIds = insertedServices.map(s => s._id);
@@ -366,39 +366,49 @@ router.get('/bookings', authorizeRole(['admin']), async (req, res) => {
 // ===============================
 router.get('/activities', authorizeRole(['admin']), async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 5;
+    const limit = parseInt(req.query.limit, 10) || 5;
 
-    const [recentBookings, recentUsers, recentVendors] = await Promise.all([
-      Booking.find().sort({ createdAt: -1 }).limit(limit).populate('customer', 'name').populate('service', 'title'),
-      User.find().sort({ createdAt: -1 }).limit(limit),
-      Vendor.find().sort({ createdAt: -1 }).limit(limit)
+    // Fetch recent bookings and recent reviews (feedbacks)
+    const [recentBookings, recentReviews] = await Promise.all([
+      Booking.find()
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .populate('customer', 'name')
+        .populate('service', 'title'),
+      
+      Booking.find({ 'rating.review': { $exists: true, $ne: '' } })
+        .sort({ 'rating.date': -1 })
+        .limit(limit)
+        .populate('customer', 'name')
+        .populate('service', 'title')
     ]);
 
-    const activities = [
-      ...recentBookings.map(b => ({
-        id: b._id,
-        type: 'booking',
-        message: `New booking: ${b.service?.title || 'Service'} by ${b.customer?.name || 'Customer'}`,
-        date: b.createdAt,
-        status: b.status
-      })),
-      ...recentUsers.map(u => ({
-        id: u._id,
-        type: 'user',
-        message: `New user joined: ${u.name}`,
-        date: u.createdAt,
-        status: 'active'
-      })),
-      ...recentVendors.map(v => ({
-        id: v._id,
-        type: 'vendor',
-        message: `New vendor joined: ${v.businessName}`,
-        date: v.createdAt,
-        status: v.verificationStatus
-      }))
-    ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, limit);
+    // Map bookings to a common activity format
+    const bookingActivities = recentBookings.map(b => ({
+      id: b._id.toString(),
+      type: 'booking',
+      message: `New booking for ${b.service?.title || 'a service'} by ${b.customer?.name || 'a customer'}.`,
+      date: b.createdAt,
+      status: b.status, // e.g., 'pending', 'confirmed'
+    }));
 
-    res.json(activities);
+    // Map reviews to a common activity format
+    const reviewActivities = recentReviews.map(r => ({
+      id: `${r._id.toString()}-review`, // Unique ID for activity list
+      type: 'review', // New type for frontend to handle
+      message: `New ${r.rating.score}-star review by ${r.customer?.name || 'Customer'}: "${r.rating.review.substring(0, 50)}..."`,
+      date: r.rating.date,
+      status: 'success', // Reviews are a positive/neutral event
+    }));
+
+    // Combine, sort by date, and limit
+    const activities = [...bookingActivities, ...reviewActivities]
+      .sort((a, b) => new Date(b.date) - new Date(a.date))
+      .slice(0, limit);
+
+    res.json({
+      activities
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -511,4 +521,202 @@ router.patch('/disputes/:id/resolve', authorizeRole(['admin']), async (req, res)
   }
 });
 
+
+// ===============================
+// Catalog Management (Categories)
+// ===============================
+
+// Get all categories with aggregated stats
+router.get('/catalog/categories', authorizeRole(['admin']), async (req, res) => {
+  try {
+    const categories = await Category.aggregate([
+      {
+        $lookup: {
+          from: 'services', // The collection name for services
+          localField: 'slug',
+          foreignField: 'category',
+          as: 'serviceList'
+        }
+      },
+      {
+        $addFields: {
+          serviceCount: { $size: '$serviceList' },
+          minPrice: { $min: '$serviceList.pricing.amount' },
+          maxPrice: { $max: '$serviceList.pricing.amount' }
+        }
+      },
+      {
+        $project: {
+          serviceList: 0 // Exclude the full service list from the final output
+        }
+      },
+      { $sort: { name: 1 } }
+    ]);
+    res.json(categories);
+  } catch (error) {
+    console.error('Error fetching categories with stats:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Create a new category
+router.post('/catalog/categories', authorizeRole(['admin']), upload.none(), async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: 'Category name is required.' });
+    }
+
+    const slug = name.toLowerCase().replace(/\s+/g, '-');
+
+    const existingCategory = await Category.findOne({ slug });
+    if (existingCategory) {
+      return res.status(409).json({ error: 'A category with this name already exists.' });
+    }
+
+    const category = new Category({ name, slug, isActive: true });
+    await category.save();
+
+    // To provide a real-time update with all stats, we can return the newly
+    // created category with the same shape as the GET /catalog/categories endpoint.
+    // Since it's new, stats will be zero.
+    const newCategoryWithStats = {
+      ...category.toObject(),
+      serviceCount: 0,
+      minPrice: null,
+      maxPrice: null,
+    };
+
+    // Emit a socket event so all connected admin clients can update their lists.
+    const { io } = await import('../index.js');
+    io.emit('category-created', newCategoryWithStats);
+    res.status(201).json(newCategoryWithStats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Update an existing category (no image handling)
+router.put('/catalog/categories/:id', authorizeRole(['admin']), async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: 'Category name is required.' });
+    }
+    const slug = name.toLowerCase().replace(/\s+/g, '-');
+
+    // Check if another category already has the new slug
+    const existingCategory = await Category.findOne({ slug, _id: { $ne: req.params.id } });
+    if (existingCategory) {
+      return res.status(409).json({ error: 'Another category with this name already exists.' });
+    }
+
+    const updateData = { name, slug };
+
+    const category = await Category.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    if (!category) {
+      return res.status(404).json({ error: 'Category not found.' });
+    }
+    res.json(category);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error while updating category.' });
+  }
+});
+
+// Delete category
+router.delete('/catalog/categories/:id', authorizeRole(['admin']), async (req, res) => {
+  try {
+    const category = await Category.findById(req.params.id);
+    if (!category) return res.status(404).json({ error: 'Category not found.' });
+
+    // Safety check: prevent deletion if services are using this category
+    const servicesExist = await Service.findOne({ category: category.slug });
+    if (servicesExist) {
+      return res.status(400).json({ error: 'Cannot delete category. Re-assign services using this category first.' });
+    }
+
+    await Category.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Category deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// NEW: Toggle category active status
+router.patch('/catalog/categories/:id/toggle', authorizeRole(['admin']), async (req, res) => {
+  try {
+    const category = await Category.findById(req.params.id);
+    if (!category) {
+      return res.status(404).json({ error: 'Category not found.' });
+    }
+    // Assumes the Category model has an 'isActive' boolean field.
+    category.isActive = !category.isActive;
+    await category.save();
+    res.json(category);
+  } catch (error) {
+    res.status(500).json({ error: 'Server error while toggling category status.' });
+  }
+});
+
+// Get all services in the catalog
+router.get('/catalog/services', authorizeRole(['admin']), async (req, res) => {
+  try {
+    const services = await Service.aggregate([
+      {
+        $lookup: {
+          from: 'vendors',
+          localField: 'vendor',
+          foreignField: '_id',
+          as: 'vendorData'
+        }
+      },
+      { $unwind: { path: '$vendorData', preserveNullAndEmptyArrays: true } },
+      {
+        $lookup: {
+          from: 'users',
+          localField: 'vendorData.user',
+          foreignField: '_id',
+          as: 'userData'
+        }
+      },
+      { $unwind: { path: '$userData', preserveNullAndEmptyArrays: true } },
+      {
+        $addFields: {
+          displayImage: {
+            $ifNull: [
+              { $arrayElemAt: ['$images', 0] },
+              PLACEHOLDER_IMAGE_URL
+            ]
+          },
+          vendor: {
+             _id: '$vendorData._id',
+             businessName: '$vendorData.businessName',
+             user: { _id: '$userData._id', name: '$userData.name', email: '$userData.email', city: '$userData.city' }
+          }
+        }
+      },
+      { $project: { vendorData: 0, userData: 0 } },
+      { $sort: { createdAt: -1 } }
+    ]);
+
+    res.json(services);
+  } catch (error) {
+    console.error('Error fetching services for admin:', error);
+    res.status(500).json({ message: 'Server error while fetching services.' });
+  }
+});
+
+// Toggle Service Active Status
+router.patch('/catalog/services/:id/toggle', authorizeRole(['admin']), async (req, res) => {
+  try {
+    const service = await Service.findById(req.params.id);
+    if (!service) return res.status(404).json({ error: 'Service not found' });
+    
+    service.isActive = !service.isActive;
+    await service.save();
+    res.json(service);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 export default router;

@@ -31,9 +31,14 @@ const userSchema = new mongoose.Schema(
       enum: ["customer", "vendor", "admin"],
       default: "customer",
     },
+    city: {
+      type: String,
+      required: true,
+      trim: true,
+      default: 'Not Specified'
+    },
     address: {
       street: String,
-      city: String,
       state: String,
       zipCode: String,
       coordinates: {

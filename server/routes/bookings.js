@@ -163,12 +163,12 @@ router.get('/:id', async (req, res) => {
   try {
     const booking = await Booking.findById(req.params.id)
       // Populate all fields initially; we will filter them based on role and status
-      .populate('customer', 'name email phone address profileImage')
+      .populate('customer', 'name email phone address avatar')
       .populate({
         path: 'vendor',
         populate: {
           path: 'user',
-          select: 'name email phone address profileImage'
+          select: 'name email phone address avatar'
         }
       })
       .populate('service')

@@ -9,6 +9,7 @@ export interface User {
     role: 'customer' | 'vendor' | 'admin';
     isVerified: boolean;
     isActive: boolean;
+    avatar?: string;
 }
 
 interface RegisterData {
@@ -27,6 +28,7 @@ interface AuthContextType {
     login: (email: string, password: string) => Promise<User>;
     register: (data: RegisterData) => Promise<User>;
     logout: () => void;
+    updateUser: (updatedUserData: Partial<User>) => void;
     isLoading: boolean;
     socket: Socket | null;
     isConnected: boolean;
@@ -108,6 +110,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             socket.disconnect();
         }
     }, [socket, token, user]); // This effect manages connection state
+
+    const updateUser = (updatedUserData: Partial<User>) => {
+        setUser(currentUser => {
+            if (!currentUser) return null;
+            const newUser = { ...currentUser, ...updatedUserData };
+            localStorage.setItem('user', JSON.stringify(newUser));
+            return newUser;
+        });
+    };
 
     const handleError = async (response: Response, defaultMsg: string) => {
         let message = defaultMsg;
@@ -199,6 +210,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         login,
         register,
         logout,
+        updateUser,
         isLoading,
         socket,
         isConnected,

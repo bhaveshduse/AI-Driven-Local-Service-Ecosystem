@@ -29,123 +29,226 @@ const router = express.Router();
 // ------------------------
 router.get('/', async (req, res) => {
   try {
-    const { category, search, lat, lng, radius = 10, city } = req.query;
+    const { category, search, lat, lng, city, minRating, sort } = req.query;
+    const MAX_SEARCH_RADIUS_KM = 50; // Cast a wide net, then filter by each vendor's radius.
 
     let pipeline = [];
 
-    // 1️⃣ Geospatial search (if lat/lng provided)
-    // This is the most efficient way to filter by location.
+    // The aggregation must start from a collection with a geo-index.
+    // Assuming the 'users' collection has a 'location' field with a 2dsphere index.
+    // The $geoNear stage must be the first stage.
+
+    // 1. Geospatial search on USERS (who are vendors)
     if (lat && lng) {
       pipeline.push({
         $geoNear: {
-          near: {
-            type: 'Point',
-            coordinates: [parseFloat(lng), parseFloat(lat)]
-          },
-          distanceField: 'distance', // Adds a 'distance' field in meters
-          maxDistance: parseFloat(radius) * 1000, // radius in km -> meters
-          query: { isActive: true }, // Pre-filter on indexed fields for efficiency
+          near: { type: 'Point', coordinates: [parseFloat(lng), parseFloat(lat)] },
+          distanceField: 'distance',
+          key: 'address.coordinates', // Explicitly specify the indexed field
+          maxDistance: MAX_SEARCH_RADIUS_KM * 1000,
+          // Filter for active vendors early
+          query: { role: 'vendor', isActive: true },
           spherical: true
         }
       });
     } else {
-      // If not doing a geo-search, start by matching active services
-      pipeline.push({ $match: { isActive: true } });
+      // If not a geo-search, start by finding all active vendors.
+      pipeline.push({ $match: { role: 'vendor', isActive: true } });
     }
 
-    // 2️⃣ Join Vendor
-    pipeline.push({
-      $lookup: {
-        from: 'vendors',
-        localField: 'vendor',
-        foreignField: '_id',
-        as: 'vendorData'
-      }
-    });
-    pipeline.push({ $unwind: '$vendorData' });
+    // 2. Join with Vendors collection
+    pipeline.push(
+      { $lookup: { from: 'vendors', localField: '_id', foreignField: 'user', as: 'vendorData' } },
+      { $unwind: '$vendorData' }
+    );
 
-    // 3️⃣ Filter for verified vendors
-    pipeline.push({
-      $match: {
-        'vendorData.verificationStatus': 'verified',
-      }
-    });
+    // NEW: Filter results from geo-search to only include vendors who serve the user's location.
+    // This makes the search much more relevant than using a single, arbitrary radius.
+    if (lat && lng) {
+      pipeline.push({
+        $match: {
+          $expr: {
+            // $distance is in meters, serviceArea.radius is in km.
+            $lte: ['$distance', { $multiply: ['$vendorData.serviceArea.radius', 1000] }]
+          }
+        }
+      });
+    }
 
-    // 4️⃣ Search filter
+    // 3. Filter for only verified vendors
+    pipeline.push({ $match: { 'vendorData.verificationStatus': 'verified' } });
+
+    // 4. Join with Services collection to get all services for these vendors
+    pipeline.push(
+      { $lookup: { from: 'services', localField: 'vendorData._id', foreignField: 'vendor', as: 'serviceData' } },
+      { $unwind: '$serviceData' }
+    );
+
+    // 5. Filter for active services
+    pipeline.push({ $match: { 'serviceData.isActive': true } });
+
+    // 6. Apply additional filters on the combined data
+    const matchFilters = {};
+
+    if (category) {
+      matchFilters['serviceData.category'] = category;
+    }
+
+    if (minRating && !isNaN(parseFloat(minRating))) {
+      // 'ratings' field is on the root user document
+      matchFilters['ratings.average'] = { $gte: parseFloat(minRating) };
+    }
+
+    if (Object.keys(matchFilters).length > 0) {
+      pipeline.push({ $match: matchFilters });
+    }
+
     if (search) {
-      // Using a regex for more flexible, case-insensitive searching across multiple fields.
-      // This is more forgiving than a simple text search and will find partial matches.
-      // For true fuzzy search (handling typos), MongoDB Atlas Search is recommended.
       const searchRegex = new RegExp(search, 'i');
       pipeline.push({
         $match: {
           $or: [
-            { title: searchRegex },
-            { description: searchRegex },
-            { category: searchRegex } // Allows searching by category slug, e.g., "plumb"
+            { 'serviceData.title': searchRegex },
+            { 'serviceData.description': searchRegex },
+            { 'vendorData.businessName': searchRegex },
+            { 'serviceData.category': searchRegex }
           ]
         }
       });
     }
 
-    // 5️⃣ Category filter
-    if (category) {
-      // The 'category' from query params is a slug string like 'plumbing', not an ObjectId.
-      // The Service model stores the category as a slug.
-      pipeline.push({ $match: { category: category } });
-    }
-
-    // 6️⃣ Join User
-    pipeline.push({
-      $lookup: {
-        from: 'users',
-        localField: 'vendorData.user',
-        foreignField: '_id',
-        as: 'userData'
-      }
-    });
-    pipeline.push({ $unwind: '$userData' });
-
-    // 7️⃣ Optional: Filter by city name if lat/lng not provided
+    // 7. City Filter (fallback for non-GPS search)
     if (city && (!lat || !lng)) {
+      const cityRegex = { $regex: city.trim(), $options: 'i' };
       pipeline.push({
         $match: {
-          'userData.address.city': { $regex: city, $options: 'i' }
+          $or: [
+            { 'city': cityRegex }, // Matches the user's primary city
+            { 'vendorData.serviceArea.cities': cityRegex } // Matches any city in their service area list
+          ]
         }
       });
     }
 
-    // 8️⃣ Project final shape
+    // 8. Project final shape to match what the frontend expects
     pipeline.push({
       $project: {
-        _id: 1,
-        title: 1,
-        description: 1,
-        category: 1,
-        isActive: 1,
-        tags: 1,
-        images: 1,
-        createdAt: 1,
-        pricing: 1,
-        price: '$pricing.amount', // frontend convenience
-        distance: { $ifNull: ['$distance', null] }, // Include distance if available
+        _id: '$serviceData._id',
+        title: '$serviceData.title',
+        description: '$serviceData.description',
+        category: '$serviceData.category',
+        pricing: '$serviceData.pricing',
+        createdAt: '$serviceData.createdAt',
+        displayImage: {
+          $ifNull: [
+            { $arrayElemAt: ['$serviceData.images', 0] },
+            'https://placehold.co/600x400?text=Service+Image'
+          ]
+        },
         vendor: {
           _id: '$vendorData._id',
           businessName: '$vendorData.businessName',
-          serviceCategories: '$vendorData.serviceCategories',
+          city: {
+            $let: {
+              vars: {
+                primary: '$city', // from the root user document
+                filteredCities: {
+                  $filter: {
+                    input: '$vendorData.serviceArea.cities',
+                    as: 'city',
+                    cond: { $and: [ { $ne: ['$$city', null] }, { $ne: ['$$city', ''] } ] }
+                  }
+                }
+              },
+              in: { $ifNull: [ '$$primary', { $arrayElemAt: ['$$filteredCities', 0] } ] }
+            }
+          },
+          verificationStatus: '$vendorData.verificationStatus',
           user: {
-            _id: '$userData._id',
-            name: '$userData.name',
-            ratings: '$userData.ratings',
-            address: '$userData.address'
+            _id: '$_id', // from the root user document
+            name: '$name',
+            ratings: '$ratings'
           }
-        }
+        },
+        distance: '$distance' // Include distance from geo-search
       }
     });
 
-    const services = await Service.aggregate(pipeline).sort({ createdAt: -1 });
+    // 9. Add Sorting Stage
+    const sortStage = {};
+    switch (sort) {
+      case 'price-asc':
+        sortStage['pricing.amount'] = 1;
+        break;
+      case 'price-desc':
+        sortStage['pricing.amount'] = -1;
+        break;
+      case 'rating-desc':
+        sortStage['vendor.user.ratings.average'] = -1;
+        break;
+      case 'relevance':
+      default:
+        if (lat && lng) {
+          sortStage.distance = 1; // Closest first
+        } else {
+          // Default relevance: best rating, then newest service
+          sortStage['vendor.user.ratings.average'] = -1;
+          sortStage.createdAt = -1;
+        }
+        break;
+    }
+    pipeline.push({ $sort: sortStage });
+
+    // The aggregation now runs on the User model
+    const services = await User.aggregate(pipeline);
+
     res.json(services);
 
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ------------------------
+// Get search suggestions
+// ------------------------
+router.get('/suggestions', async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.length < 2) {
+      return res.json([]);
+    }
+
+    const searchRegex = new RegExp(q, 'i');
+
+    // Search for distinct service titles and categories that match
+    const services = await Service.aggregate([
+      // Find active services matching the query in title or category
+      {
+        $match: {
+          isActive: true,
+          $or: [
+            { title: searchRegex },
+            { category: searchRegex }
+          ]
+        }
+      },
+      // Limit to reduce processing
+      { $limit: 50 },
+      { $project: { title: 1, category: 1 } }
+    ]);
+
+    // Create a set of unique suggestions
+    const suggestions = new Set();
+    services.forEach(service => {
+      if (searchRegex.test(service.title)) suggestions.add(service.title);
+      if (searchRegex.test(service.category)) {
+        const formattedCategory = service.category.charAt(0).toUpperCase() + service.category.slice(1).replace(/-/g, ' ');
+        suggestions.add(formattedCategory);
+      }
+    });
+
+    res.json(Array.from(suggestions).slice(0, 8));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -161,7 +264,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
         path: 'vendor',
         populate: {
           path: 'user',
-          select: 'name ratings address profileImage'
+          select: 'name ratings address avatar'
         }
       });
 
@@ -171,8 +274,17 @@ router.get('/:id', authenticateToken, async (req, res) => {
       return res.status(404).json({ error: 'Service not found or vendor not verified' });
     }
 
-    res.json(service);
+    // Convert to plain object to add a new property
+    const serviceObj = service.toObject();
+    
+    // Dynamically determine the displayImage
+    if (serviceObj.images && serviceObj.images.length > 0) {
+      serviceObj.displayImage = serviceObj.images[0];
+    } else {
+      serviceObj.displayImage = 'https://placehold.co/600x400?text=Service+Image';
+    }
 
+    res.json(serviceObj);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -185,30 +297,62 @@ router.post('/', authenticateToken, authorizeRole(['vendor']), upload.array('ima
   try {
     const vendor = await Vendor.findOne({ user: req.user._id });
     if (!vendor) {
-      return res.status(404).json({ error: 'Vendor profile not found for the current user.' });
+      return res.status(404).json({ error: 'Vendor profile not found.' });
     }
 
     if (vendor.verificationStatus !== 'verified') {
-      return res.status(403).json({ error: 'Your vendor profile must be verified to create services.' });
+      return res.status(403).json({ error: 'Vendor not verified.' });
     }
 
-    // Parse JSON fields if they come as strings (FormData)
-    if (typeof req.body.pricing === 'string') req.body.pricing = JSON.parse(req.body.pricing);
-    if (typeof req.body.duration === 'string') req.body.duration = JSON.parse(req.body.duration);
-    if (typeof req.body.included === 'string') req.body.included = JSON.parse(req.body.included);
-    if (typeof req.body.excluded === 'string') req.body.excluded = JSON.parse(req.body.excluded);
-    if (typeof req.body.requirements === 'string') req.body.requirements = JSON.parse(req.body.requirements);
-    if (typeof req.body.tags === 'string') req.body.tags = JSON.parse(req.body.tags);
+    // Fetch the vendor's user profile to get their location coordinates.
+    const vendorUser = await User.findById(vendor.user).select('address');
+    if (!vendorUser) {
+      return res.status(500).json({ error: 'Data integrity error: Could not find user profile for this vendor.' });
+    }
+
+    // --- Data Parsing ---
+    // For objects, parse directly and let the main try/catch handle errors.
+    const pricing = typeof req.body.pricing === 'string' ? JSON.parse(req.body.pricing) : req.body.pricing;
+    const duration = typeof req.body.duration === 'string' ? JSON.parse(req.body.duration) : req.body.duration;
+
+    // For optional arrays, a safe parse helper is cleaner.
+    const safeParseArray = (data) => {
+      if (!data) return [];
+      try {
+        const parsed = JSON.parse(data);
+        // Ensure it's an array and filter out any empty strings from the frontend.
+        return Array.isArray(parsed) ? parsed.filter(Boolean) : [];
+      } catch (e) {
+        return [];
+      }
+    };
 
     // Handle images
     const imagePaths = req.files ? req.files.map(file => file.path.replace(/\\/g, '/')) : [];
 
-    const service = new Service({
-      ...req.body,
-      vendor: vendor._id, // Ensure the service is linked to the correct vendor
-      images: imagePaths
-    });
+    const serviceData = {
+      title: req.body.title,
+      description: req.body.description,
+      category: req.body.category,
+      pricing: pricing,
+      duration: duration,
+      included: safeParseArray(req.body.included), // Use safeParseArray for optional lists
+      excluded: safeParseArray(req.body.excluded),
+      requirements: safeParseArray(req.body.requirements),
+      vendor: vendor._id,
+      images: imagePaths,
+    };
 
+    // FIX: Conditionally add the location field to prevent Mongo geo index errors.
+    // This copies the vendor's location to the service upon creation.
+    if (vendorUser.address && Array.isArray(vendorUser.address.coordinates) && vendorUser.address.coordinates.length === 2) {
+      serviceData.location = {
+        type: 'Point',
+        coordinates: vendorUser.address.coordinates
+      };
+    }
+
+    const service = new Service(serviceData);
     await service.save();
 
     // Also add the service to the vendor's list of services
@@ -216,6 +360,99 @@ router.post('/', authenticateToken, authorizeRole(['vendor']), upload.array('ima
     await vendor.save();
 
     // Populate the new service to match the structure expected by the frontend for real-time updates
+    const populatedService = await Service.findById(service._id).populate({
+      path: 'vendor',
+      select: 'businessName verificationStatus user',
+      populate: {
+        path: 'user',
+        select: 'name ratings',
+      },
+    });
+
+    // Emit real-time event via Socket.IO to update all connected clients
+    if (populatedService) {
+      const { io } = await import('../index.js');
+      io.emit('serviceUpdated', {
+        vendorId: vendor._id,
+        userId: vendor.user,
+        services: [populatedService],
+      });
+    }
+
+    res.status(201).json(service);
+  } catch (error) {
+    // Enhanced error logging for easier debugging
+    console.error("SERVICE CREATION ERROR:", error);
+    res.status(500).json({ error: error.message, stack: process.env.NODE_ENV === 'development' ? error.stack : undefined });
+  }
+});
+
+// ------------------------
+// Update a service (vendor only)
+// ------------------------
+router.put('/:id', authenticateToken, authorizeRole(['vendor']), upload.array('images', 5), async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ user: req.user._id });
+    if (!vendor) return res.status(404).json({ error: 'Vendor profile not found.' });
+
+    // Find the service before updating to get the old image list for cleanup
+    const serviceToUpdate = await Service.findOne({ _id: req.params.id, vendor: vendor._id });
+    if (!serviceToUpdate) return res.status(404).json({ error: 'Service not found or you do not have permission to edit it.' });
+
+    // Parse JSON fields if they come as strings
+    if (typeof req.body.pricing === 'string') req.body.pricing = JSON.parse(req.body.pricing);
+    if (typeof req.body.duration === 'string') req.body.duration = JSON.parse(req.body.duration);
+    if (typeof req.body.included === 'string') req.body.included = JSON.parse(req.body.included).filter(Boolean);
+    if (typeof req.body.excluded === 'string') req.body.excluded = JSON.parse(req.body.excluded).filter(Boolean);
+    if (typeof req.body.requirements === 'string') req.body.requirements = JSON.parse(req.body.requirements).filter(Boolean);
+    // Also parse existingImages sent from the frontend
+    const existingImagesToKeep = (typeof req.body.existingImages === 'string')
+      ? JSON.parse(req.body.existingImages)
+      : (Array.isArray(req.body.existingImages) ? req.body.existingImages : []);
+
+    // --- Build updateData explicitly for clarity and safety ---
+    // This prevents any unexpected fields from req.body from being part of the update.
+    const updateData = {
+      title: req.body.title,
+      description: req.body.description,
+      category: req.body.category,
+      pricing: req.body.pricing,
+      duration: req.body.duration,
+      included: Array.isArray(req.body.included) ? req.body.included.filter(Boolean) : [],
+      excluded: Array.isArray(req.body.excluded) ? req.body.excluded.filter(Boolean) : [],
+      requirements: Array.isArray(req.body.requirements) ? req.body.requirements.filter(Boolean) : [],
+    };
+
+    // --- IMAGE HANDLING ---
+    // Get the paths of any newly uploaded files.
+    const newImagePaths = req.files ? req.files.map(f => f.path.replace(/\\/g, '/')) : [];
+
+    // The final array of images is the combination of kept existing images and new uploads.
+    updateData.images = [...existingImagesToKeep, ...newImagePaths];
+
+    // --- ORPHANED IMAGE DELETION ---
+    // Compare the old image array with the new one to find images that were removed.
+    const oldImages = serviceToUpdate.images || [];
+    const newImages = updateData.images;
+    const imagesToDelete = oldImages.filter(oldImg => !newImages.includes(oldImg));
+
+    imagesToDelete.forEach(imagePath => {
+      // Use fs.unlink to delete the file from the server.
+      // Add a try-catch to prevent a failed deletion from crashing the request.
+      try {
+        fs.unlinkSync(path.join(process.cwd(), imagePath));
+      } catch (err) {
+        console.error(`Failed to delete orphaned image: ${imagePath}`, err);
+      }
+    });
+
+    const service = await Service.findOneAndUpdate(
+      { _id: req.params.id, vendor: vendor._id }, // Ensure vendor owns this service
+      updateData,
+      { new: true, runValidators: true }
+    );
+
+    // Populate the updated service to match the structure expected by the frontend for real-time updates
     const populatedService = await Service.findById(service._id)
       .populate({
         path: 'vendor',
@@ -229,52 +466,14 @@ router.post('/', authenticateToken, authorizeRole(['vendor']), upload.array('ima
     // Emit real-time event via Socket.IO to update all connected clients
     if (populatedService) {
       const { io } = await import('../index.js');
-      io.emit('serviceUpdated', { vendorId: vendor._id, services: [populatedService] });
+      io.emit('serviceUpdated', {
+        vendorId: vendor._id,
+        userId: vendor.user, // Add userId for client-side filtering
+        services: [populatedService]
+      });
     }
 
-    res.status(201).json(service);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ------------------------
-// Update a service (vendor only)
-// ------------------------
-router.put('/:id', authenticateToken, authorizeRole(['vendor']), upload.array('images', 5), async (req, res) => {
-  try {
-    const vendor = await Vendor.findOne({ user: req.user._id });
-    if (!vendor) return res.status(404).json({ error: 'Vendor profile not found.' });
-
-    // Parse JSON fields if they come as strings
-    if (typeof req.body.pricing === 'string') req.body.pricing = JSON.parse(req.body.pricing);
-    if (typeof req.body.duration === 'string') req.body.duration = JSON.parse(req.body.duration);
-    if (typeof req.body.included === 'string') req.body.included = JSON.parse(req.body.included);
-    if (typeof req.body.excluded === 'string') req.body.excluded = JSON.parse(req.body.excluded);
-    if (typeof req.body.requirements === 'string') req.body.requirements = JSON.parse(req.body.requirements);
-    if (typeof req.body.tags === 'string') req.body.tags = JSON.parse(req.body.tags);
-
-    let updateData = { ...req.body };
-
-    // If new images are uploaded, append them to the existing ones
-    if (req.files && req.files.length > 0) {
-      const newImages = req.files.map(f => f.path.replace(/\\/g, '/'));
-      const existingService = await Service.findOne({ _id: req.params.id, vendor: vendor._id });
-      if (existingService) {
-        // Combine existing images with new ones
-        updateData.images = [...(existingService.images || []), ...newImages];
-      }
-    }
-
-    const service = await Service.findOneAndUpdate(
-      { _id: req.params.id, vendor: vendor._id }, // Ensure vendor owns this service
-      updateData,
-      { new: true, runValidators: true }
-    );
-
-    if (!service) return res.status(404).json({ error: 'Service not found or you do not have permission to edit it.' });
-
-    res.json(service);
+    res.json(populatedService);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -295,7 +494,55 @@ router.delete('/:id', authenticateToken, authorizeRole(['vendor']), async (req, 
     // Remove the service from the vendor's services array
     await Vendor.updateOne({ _id: vendor._id }, { $pull: { services: service._id } });
 
+    // Emit a real-time event to notify clients of the deletion
+    const { io } = await import('../index.js');
+    io.emit('serviceDeleted', {
+      serviceId: service._id,
+      vendorId: vendor._id,
+      userId: vendor.user // Add userId for client-side filtering
+    });
+
     res.json({ message: 'Service deleted successfully.' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ------------------------
+// Toggle service active status (vendor only)
+// ------------------------
+router.patch('/:id/toggle-active', authenticateToken, authorizeRole(['vendor']), async (req, res) => {
+  try {
+    const vendor = await Vendor.findOne({ user: req.user._id });
+    if (!vendor) return res.status(404).json({ error: 'Vendor profile not found.' });
+
+    const service = await Service.findOne({ _id: req.params.id, vendor: vendor._id });
+    if (!service) return res.status(404).json({ error: 'Service not found or you do not have permission to edit it.' });
+
+    service.isActive = !service.isActive;
+    await service.save();
+
+    // Populate and emit event, similar to the PUT route
+    const populatedService = await Service.findById(service._id)
+      .populate({
+        path: 'vendor',
+        select: 'businessName verificationStatus user',
+        populate: {
+          path: 'user',
+          select: 'name ratings'
+        }
+      });
+
+    if (populatedService) {
+      const { io } = await import('../index.js');
+      io.emit('serviceUpdated', {
+        vendorId: vendor._id,
+        userId: vendor.user,
+        services: [populatedService]
+      });
+    }
+
+    res.json(service);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -310,12 +557,8 @@ router.get('/categories/list', async (req, res) => {
         // This ensures all available categories are shown, not just those with existing services.
         const categories = await Category.find({ isActive: { $ne: false } })
             .sort({ priority: -1, name: 1 });
-
-        res.json(categories.map(cat => ({
-            id: cat.slug, // The frontend uses this ID as the value for filtering, which is the slug.
-            name: cat.name,
-            icon: cat.icon, // Pass icon if available
-        })));
+        // Return the full category object to be consistent across the app
+        res.json(categories);
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

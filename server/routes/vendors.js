@@ -1,8 +1,10 @@
 import express from 'express';
+import fetch from 'node-fetch';
 import Vendor from '../models/Vendor.js';
 import Service from '../models/Service.js';
 import Booking from '../models/Booking.js';
 import User from '../models/User.js';
+import Category from '../models/Category.js';
 import { authenticateToken, authorizeRole } from '../middleware/auth.js';
 import multer from 'multer';
 import path from 'path';
@@ -23,21 +25,9 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage });
 
-// Default images for services
-const CATEGORY_IMAGES = {
-  plumbing: ['https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d1?auto=format&fit=crop&q=80&w=800'],
-  electrical: ['https://images.unsplash.com/photo-1621905251189-08b45d6a269e?auto=format&fit=crop&q=80&w=800'],
-  cleaning: ['https://images.unsplash.com/photo-1584622050111-993a426fbf0a?auto=format&fit=crop&q=80&w=800'],
-  painting: ['https://images.unsplash.com/photo-1562259949-e8e7689d7828?auto=format&fit=crop&q=80&w=800'],
-  carpentry: ['https://images.unsplash.com/photo-1533090161767-e6ffed986c88?auto=format&fit=crop&q=80&w=800'],
-  'appliance-repair': ['https://images.unsplash.com/photo-1581092921461-eab62e97a782?auto=format&fit=crop&q=80&w=800'],
-  hvac: ['https://images.unsplash.com/photo-1581094794329-c8112a89af12?auto=format&fit=crop&q=80&w=800'],
-  landscaping: ['https://images.unsplash.com/photo-1558904541-efa843a96f01?auto=format&fit=crop&q=80&w=800'],
-  moving: ['https://images.unsplash.com/photo-1600518464441-9154a4dea21b?auto=format&fit=crop&q=80&w=800'],
-  'pest-control': ['https://images.unsplash.com/photo-1587574293340-e0011c4e8ecf?auto=format&fit=crop&q=80&w=800'],
-  handyman: ['https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d1?auto=format&fit=crop&q=80&w=800'],
-};
-const DEFAULT_IMAGE = ['https://images.unsplash.com/photo-1504328345606-18bbc8c9d7d1?auto=format&fit=crop&q=80&w=800'];
+// Default image for services if a category-specific one isn't found
+const PLACEHOLDER_IMAGE_URL = 'https://placehold.co/600x400?text=Service+Image';
+const DEFAULT_IMAGE = [PLACEHOLDER_IMAGE_URL];
 
 // ===============================
 // Middleware: Check Vendor Verification
@@ -102,25 +92,68 @@ router.put(
         description,
         cities,
         radius,
+        // Add fields for the User model update
+        city,
+        street,
+        state,
+        zipCode
       } = req.body;
 
       // --- 1. Update User Document ---
       const userUpdateData = {};
       if (req.files && req.files['profilePhoto']) {
-        userUpdateData.profileImage = req.files['profilePhoto'][0].path.replace(/\\/g, '/');
+        userUpdateData.avatar = req.files['profilePhoto'][0].path.replace(/\\/g, '/');
       }
       
-      // Use the first city from the service area as the primary city for the user's address
-      const primaryCity = cities ? JSON.parse(cities)[0] : undefined;
-
-      if (req.body.street || req.body.state || req.body.zipCode) {
-        userUpdateData.address = {
-          street: req.body.street,
-          city: primaryCity,
-          state: req.body.state,
-          zipCode: req.body.zipCode
-        };
+      // The user's primary city is now a separate field.
+      if (city) {
+        userUpdateData.city = city;
       }
+
+      // --- NEW: Geocode address and prepare for update ---
+      const addressForGeocoding = [street, city, state, zipCode].filter(Boolean).join(', ');
+      if (addressForGeocoding) {
+        try {
+          console.log(`[Geocoding] Attempt 1: Fetching coordinates for full address: "${addressForGeocoding}"`);
+
+          const geocode = async (addressString) => {
+            if (!addressString) return [];
+            const geocodeUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addressString)}&format=json&limit=1`;
+            const response = await fetch(geocodeUrl, {
+              headers: { 'User-Agent': 'Swayam-App/1.0' }
+            });
+            if (!response.ok) return [];
+            return await response.json();
+          };
+
+          let geocodeData = await geocode(addressForGeocoding);
+
+          // If the full address fails, try a simpler version (city, state, zip)
+          if (!geocodeData || geocodeData.length === 0) {
+            const simplerAddress = [city, state, zipCode].filter(Boolean).join(', ');
+            console.warn(`[Geocoding] Attempt 1 failed. Attempt 2: Trying simpler address: "${simplerAddress}"`);
+            if (simplerAddress && simplerAddress !== addressForGeocoding) {
+              geocodeData = await geocode(simplerAddress);
+            }
+          }
+
+          if (geocodeData && geocodeData.length > 0) {
+            const { lat, lon } = geocodeData[0];
+            // Use dot notation to update nested fields
+            userUpdateData['address.coordinates'] = [parseFloat(lon), parseFloat(lat)];
+            console.log(`[Geocoding] Success. Found coordinates: [${lon}, ${lat}]`);
+          } else {
+            console.warn(`[Geocoding] All geocoding attempts failed for address: "${addressForGeocoding}"`);
+          }
+        } catch (geoError) {
+          console.error('[Geocoding] Error during geocoding process:', geoError);
+        }
+      }
+
+      // Update other address fields if provided, using dot notation
+      if (street) userUpdateData['address.street'] = street;
+      if (state) userUpdateData['address.state'] = state;
+      if (zipCode) userUpdateData['address.zipCode'] = zipCode;
 
       if (Object.keys(userUpdateData).length > 0) {
         await User.findByIdAndUpdate(req.user._id, { $set: userUpdateData });
@@ -156,6 +189,44 @@ router.put(
 );
 
 // ===============================
+// Get Services for a specific Vendor
+// ===============================
+router.get(
+  '/services',
+  authenticateToken,
+  authorizeRole(['vendor']),
+  async (req, res) => {
+    try {
+      const vendor = await Vendor.findOne({ user: req.user._id });
+      if (!vendor) {
+        return res.status(404).json({ error: 'Vendor profile not found.' });
+      }
+
+      // Use an aggregation pipeline to dynamically add a reliable displayImage.
+      // This solves the issue of showing stale default images and simplifies the frontend.
+      const services = await Service.aggregate([
+        { $match: { vendor: vendor._id } },
+        {
+          $addFields: {
+            displayImage: {
+              $ifNull: [
+                { $arrayElemAt: ['$images', 0] }, // 1. Vendor's first uploaded image
+                'https://placehold.co/600x400?text=Service+Image' // 3. Global placeholder
+              ]
+            }
+          }
+        },
+        { $sort: { createdAt: -1 } }
+      ]);
+
+      res.json(services);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// ===============================
 // Admin: Verify Vendor & Auto-Create Default Services
 // ===============================
 router.post(
@@ -178,12 +249,17 @@ router.post(
 
       let insertedServices = [];
       if (existingServices.length === 0 && vendor.serviceCategories?.length > 0) {
+        // Fetch category images from the database to ensure they are up-to-date
+        const categories = await Category.find({ slug: { $in: vendor.serviceCategories } });
+        const categoryMap = categories.reduce((acc, c) => ({ ...acc, [c.slug]: c.image }), {});
+
         const defaultServices = vendor.serviceCategories.map(cat => ({
           title: `${cat.charAt(0).toUpperCase() + cat.slice(1)} Service`,
           description: `Professional ${cat.replace('-', ' ')} service by ${vendor.businessName}`,
           category: cat,
           pricing: { type: 'fixed', amount: 500, unit: 'per job' },
-          images: CATEGORY_IMAGES[cat] || DEFAULT_IMAGE,
+          // Use the image from the database, or a fallback if not found
+          images: categoryMap[cat] ? [categoryMap[cat]] : DEFAULT_IMAGE,
           vendor: vendor._id,
           isActive: true,
         }));
@@ -374,7 +450,7 @@ router.get(
         'rating.review': { $exists: true, $ne: '' } // Find reviews with non-empty text
       })
       .sort({ 'rating.date': -1 })
-      .limit(3)
+      .limit(5)
       .populate('customer', 'name')
       .select('rating customer');
 

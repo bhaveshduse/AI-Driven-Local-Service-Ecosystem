@@ -14,10 +14,8 @@ const serviceSchema = new mongoose.Schema({
     trim: true
   },
 
-  // 🔥 FIXED: Proper Reference
   category: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Category',
+    type: String, // This should be the category slug, e.g., 'plumbing'
     required: true,
     index: true
   },

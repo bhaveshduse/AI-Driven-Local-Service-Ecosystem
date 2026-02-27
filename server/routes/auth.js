@@ -12,7 +12,7 @@ const router = express.Router();
 // =======================
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, password, phone, role, businessName, serviceCategories } = req.body;
+    const { name, email, password, phone, role, city, businessName, serviceCategories } = req.body;
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -25,6 +25,7 @@ router.post("/register", async (req, res) => {
       password,
       phone,
       role: role || "customer",
+      city: city, // Save the city from the registration form
     });
 
     await user.save();

@@ -3,21 +3,24 @@ import mongoose from 'mongoose';
 const categorySchema = new mongoose.Schema({
   slug: {
     type: String,
-    required: true,
     unique: true,
     trim: true,
     lowercase: true,
+    index: true,
   },
 
   name: {
     type: String,
-    required: true,
+    required: [true, 'Category name is required.'],
+    unique: true,
     trim: true,
   },
 
   image: {
     type: String,
-    required: true
+    // Having a default image makes the API more robust against missing uploads.
+    // Ensure this file exists in your `uploads` directory or is publicly accessible.
+    default: 'uploads/default-category.png'
   },
 
   icon: {
@@ -46,6 +49,7 @@ const categorySchema = new mongoose.Schema({
   priority: {
     type: Number,
     default: 0,
+    index: true,
   }
 
 }, { timestamps: true });
