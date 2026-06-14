@@ -3,7 +3,7 @@
 const axios = require('axios');
 
 // Port where your Python FastAPI service runs
-const PYTHON_AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://localhost:8001"; 
+const PYTHON_AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://localhost:8000"; 
 
 /**
  * Calls the local Python service to classify user input.

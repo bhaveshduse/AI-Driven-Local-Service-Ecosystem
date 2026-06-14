@@ -133,9 +133,10 @@ export const Home = () => {
     const toastId = toast.loading("Getting your location...");
 
     try {
-      const { coordinates: newCoords, city } = await getLocation();
+      const { coordinates: newCoords, address } = await getLocation();
+      const city = address?.city || address?.town || address?.village;
 
-      setCoordinates(newCoords);
+      setCoordinates({ lat: newCoords.lat, lng: newCoords.lon });
 
       if (city) {
         setLocationQuery(city);

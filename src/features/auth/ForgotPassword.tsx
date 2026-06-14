@@ -1,4 +1,5 @@
 import { useState } from "react";
+import apiClient from "../../services/apiClient";
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState("");
@@ -11,20 +12,10 @@ export default function ForgotPassword() {
     setMessage("");
 
     try {
-      const response = await fetch("/api/auth/forgot-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-
-      const data = await response.json();
-      if (response.ok) {
-        setMessage("Reset link sent to your email.");
-      } else {
-        setMessage(data.error || "Something went wrong.");
-      }
-    } catch {
-      setMessage("Network error.");
+      const { data } = await apiClient.post('/auth/forgot-password', { email });
+      setMessage(data.message);
+    } catch (error: any) {
+      setMessage(error.response?.data?.error || "Network error.");
     } finally {
       setLoading(false);
     }

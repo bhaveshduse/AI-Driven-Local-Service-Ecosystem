@@ -4,6 +4,7 @@ import crypto from "crypto";
 import User from "../models/User.js";
 import Vendor from "../models/Vendor.js";
 import sendEmail from "../utils/sendEmail.js";
+import { authenticateToken } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -12,7 +13,7 @@ const router = express.Router();
 // =======================
 router.post("/register", async (req, res) => {
   try {
-    const { name, email, password, phone, role, city, businessName, serviceCategories } = req.body;
+    const { name, email, password, phone, role, city, businessName, primaryCategory, serviceCategories, suggestedCategory } = req.body;
 
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -31,10 +32,20 @@ router.post("/register", async (req, res) => {
     await user.save();
 
     if (role === "vendor") {
+      // Ensure serviceCategories is an array, as it comes from JSON body
+      const parsedServiceCategories = Array.isArray(serviceCategories) ? serviceCategories : [];
+
+      // Ensure primary category is included in the main list for easier searching.
+      if (primaryCategory && !parsedServiceCategories.includes(primaryCategory)) {
+        parsedServiceCategories.push(primaryCategory);
+      }
+
       const vendor = new Vendor({
         user: user._id,
         businessName: businessName || name,
-        serviceCategories: serviceCategories || [],
+        primaryCategory,
+        serviceCategories: parsedServiceCategories,
+        suggestedCategory: suggestedCategory || '',
       });
       await vendor.save();
     }
@@ -101,6 +112,23 @@ router.post("/login", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// =======================
+// Get Current User Profile
+// =======================
+router.get("/me", authenticateToken, async (req, res) => {
+  try {
+    // req.user is populated by authenticateToken middleware
+    const user = await User.findById(req.user._id).select("-password");
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // =======================
 // Forgot Password
 // =======================

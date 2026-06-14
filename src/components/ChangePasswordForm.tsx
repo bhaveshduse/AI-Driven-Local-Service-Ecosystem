@@ -1,6 +1,7 @@
 import React from 'react';
 import { useForm } from 'react-hook-form';
 import { useAuth } from '../contexts/AuthContext';
+import apiClient from '../services/apiClient';
 import { toast } from 'react-hot-toast';
 import { Lock, Loader2 } from 'lucide-react';
 
@@ -30,24 +31,15 @@ const ChangePasswordForm = () => {
     const toastId = toast.loading('Changing password...');
 
     try {
-      const res = await fetch('/api/users/profile/change-password', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ currentPassword: data.currentPassword, newPassword: data.newPassword }),
+      await apiClient.put('/users/profile/change-password', {
+        currentPassword: data.currentPassword,
+        newPassword: data.newPassword
       });
-
-      const responseData = await res.json();
-      if (!res.ok) {
-        throw new Error(responseData.error || 'Failed to change password.');
-      }
 
       toast.success('Password changed successfully!', { id: toastId });
       reset(); // Clear form fields
     } catch (error: any) {
-      toast.error(error.message, { id: toastId });
+      toast.error(error.response?.data?.error || error.message, { id: toastId });
     }
   };
 

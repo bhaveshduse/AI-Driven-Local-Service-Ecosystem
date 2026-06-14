@@ -13,7 +13,7 @@ export interface Customer {
  * @returns A promise that resolves to an array of customer users.
  */
 export const getCustomers = async (token: string): Promise<Customer[]> => {
-  const response = await apiClient.get<{ users: Customer[] }>('/api/admin/users', {
+  const response = await apiClient.get<{ users: Customer[] }>('/admin/users', {
     headers: { 'Authorization': `Bearer ${token}` }
   });
   // Filter for customers within the service function

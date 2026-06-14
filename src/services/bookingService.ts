@@ -7,29 +7,32 @@ export interface BookingPayload {
   scheduledDate: string;
   price: {
     amount: number;
-    currency: string;
+    currency?: string;
   };
   address: {
     street: string;
     city: string;
     zipCode: string;
+    coordinates: {
+        lat: number;
+        lon: number;
+    }
   };
-  notes: {
+  notes?: {
     customerNotes: string;
   };
+  paymentMethod?: 'manual' | 'gateway';
 }
 
 /**
  * Creates a new booking.
  * @param payload - The booking data.
- * @param token - The user's authentication token.
  * @returns A promise that resolves to the newly created booking object.
  */
-export const createBooking = async (payload: BookingPayload, token: string) => {
-  const response = await apiClient.post('/api/bookings', payload, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-    },
-  });
+export const createBooking = async (payload: BookingPayload) => {
+  // The path was incorrect, causing a 404 error with a duplicated /api path.
+  // The apiClient is already configured with a baseURL of '/api'.
+  // The auth token is also automatically added by the apiClient interceptor.
+  const response = await apiClient.post('/bookings', payload);
   return response.data;
 };

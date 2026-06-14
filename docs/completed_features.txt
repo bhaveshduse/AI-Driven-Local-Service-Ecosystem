@@ -34,3 +34,8 @@ Project Status: Completed Features
 6. Admin Features
    - Dashboard Analytics (Revenue, User Counts)
    - User Management
+
+
+   Project Run Commannds
+   Web Server:- npm run dev
+   AI Server:-  uvicorn ai_classify:app --reload --port 8000

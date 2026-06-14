@@ -24,7 +24,7 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "services")
-
+model_version="gemini-2.5-flash"
 if not HF_TOKEN:
     raise EnvironmentError("Missing HF_TOKEN in .env file.")
 
@@ -161,7 +161,7 @@ async def call_classification(http_client: httpx.AsyncClient, query: str, labels
 # ==========================================
 # Classification Fallback (Gemini API)
 # ==========================================
-async def classify_with_gemini(query: str, labels: List[Dict[str, Any]]) -> Dict[str, Any]:
+# async def classify_with_gemini(query: str, labels: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Uses Gemini as a fallback for more robust classification."""
     try:
         label_names = [item['display_name'] for item in labels]
@@ -181,7 +181,7 @@ async def classify_with_gemini(query: str, labels: List[Dict[str, Any]]) -> Dict
         """
 
         response = await client.aio.models.generate_content(
-            model="gemini-flash-latest",
+            model=model_version,
             contents=prompt,
         )
 
@@ -202,7 +202,48 @@ async def classify_with_gemini(query: str, labels: List[Dict[str, Any]]) -> Dict
     except Exception as e:
         logging.error(f"Gemini classification error: {e}")
         return {"label": "General", "confidence": 0}
+async def classify_with_gemini(query: str, labels: List[Dict[str, Any]]) -> Dict[str, Any]:
+    try:
+        label_names = [item['display_name'] for item in labels]
+        
+        # System instructions force it to pick from the list
+        prompt = f"""
+        You are a routing assistant. Classify the user's request into EXACTLY ONE of these categories:
+        {', '.join(label_names)}
 
+        If multiple categories apply, pick the most urgent one (e.g., Plumbing or Pest Control over Cleaning).
+        PRIORITY RULES:
+        1. If there is SMOKE, SPARKS, or EXPOSED WIRES, always choose 'Electrical' regardless of water issues.
+        2. If there is an active flood, choose 'Plumbing'.
+        3. Otherwise, pick the most relevant category.
+        Respond ONLY with the category name.
+
+        User Request: "{query}"
+        """
+
+        response = await client.aio.models.generate_content(
+            model=model_version,
+            contents=prompt,
+        )
+
+        if response and response.text:
+            cleaned_answer = response.text.strip().lower()
+            
+            # Fuzzy match check
+            for item in labels:
+                if item['display_name'].lower() in cleaned_answer:
+                    logging.info(f"Matched hallucinated response to: {item['display_name']}")
+                    return {
+                        "label": item['hypothesis_text'], 
+                        "confidence": 95.0
+                    }
+
+        # Final fallback if it STILL misses
+        return {"label": "General", "confidence": 0}
+        
+    except Exception as e:
+        logging.error(f"Gemini Fallback Error: {e}")
+        return {"label": "General", "confidence": 0}
 # ==========================================
 # Expert Advice Generator (Gemini API)
 # ==========================================
@@ -234,7 +275,7 @@ async def generate_expert_advice(service_name: str, user_query: str) -> str:
 
 
         response = await client.aio.models.generate_content(
-            model="gemini-flash-latest",
+            model = model_version,
             contents=prompt,
         )
 
@@ -263,7 +304,7 @@ async def generate_service_description(service_title: str, category_name: str) -
         The description should be concise (2-3 sentences), highlight the key benefits for the customer, and encourage them to book the service. It should be ready to be displayed on a service booking website.
         """
         response = await client.aio.models.generate_content(
-            model="gemini-flash-latest",
+            model = model_version,
             contents=prompt,
         )
         return response.text.strip() if response.text else "Could not generate a description. Please write one manually."
@@ -322,4 +363,4 @@ def health():
 if __name__ == "__main__":
     import uvicorn
     logging.info("Starting AI Service Matcher API")
-    uvicorn.run("ai_classify:app", host="0.0.0.0", port=8001, reload=True)
+    uvicorn.run("ai_classify:app", host="0.0.0.0", port=8000, reload=True)

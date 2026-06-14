@@ -1,6 +1,7 @@
 import express from 'express';
 import Service from '../models/Service.js';
 import Vendor from '../models/Vendor.js';
+import Booking from '../models/Booking.js';
 import mongoose from 'mongoose';
 import User from '../models/User.js';
 import Category from '../models/Category.js';
@@ -29,7 +30,11 @@ const router = express.Router();
 // ------------------------
 router.get('/', async (req, res) => {
   try {
-    const { category, search, lat, lng, city, minRating, sort } = req.query;
+    const { category, search, lat, lng, city, minRating, sort, page, limit } = req.query;
+
+    // --- LOGGING: Show incoming query parameters ---
+    console.log('[services.js] Received GET /services request with query:', req.query);
+
     const MAX_SEARCH_RADIUS_KM = 50; // Cast a wide net, then filter by each vendor's radius.
 
     let pipeline = [];
@@ -68,8 +73,8 @@ router.get('/', async (req, res) => {
       pipeline.push({
         $match: {
           $expr: {
-            // $distance is in meters, serviceArea.radius is in km.
-            $lte: ['$distance', { $multiply: ['$vendorData.serviceArea.radius', 1000] }]
+            // $distance is in meters, serviceRadiusKm is in km.
+            $lte: ['$distance', { $multiply: ['$serviceRadiusKm', 1000] }]
           }
         }
       });
@@ -186,6 +191,15 @@ router.get('/', async (req, res) => {
       case 'rating-desc':
         sortStage['vendor.user.ratings.average'] = -1;
         break;
+      case 'nearest':
+        if (lat && lng) {
+          sortStage.distance = 1; // Closest first
+        } else {
+          // If no location, 'nearest' is meaningless. Fallback to a relevance-like sort.
+          sortStage['vendor.user.ratings.average'] = -1;
+          sortStage.createdAt = -1;
+        }
+        break;
       case 'relevance':
       default:
         if (lat && lng) {
@@ -199,13 +213,43 @@ router.get('/', async (req, res) => {
     }
     pipeline.push({ $sort: sortStage });
 
-    // The aggregation now runs on the User model
-    const services = await User.aggregate(pipeline);
+    // 10. Add Pagination using $facet
+    const pageNum = parseInt(page, 10) || 1;
+    const limitNum = parseInt(limit, 10) || 12;
+    const skip = (pageNum - 1) * limitNum;
 
-    res.json(services);
+    pipeline.push({
+      $facet: {
+        services: [
+          { $skip: skip },
+          { $limit: limitNum }
+        ],
+        totalCount: [
+          { $count: 'count' }
+        ]
+      }
+    });
+
+    // --- LOGGING: Show the full aggregation pipeline before execution ---
+    console.log('[services.js] Executing aggregation pipeline:', JSON.stringify(pipeline, null, 2));
+
+    const results = await User.aggregate(pipeline);
+
+    const services = results[0].services;
+    const totalServices = results[0].totalCount[0] ? results[0].totalCount[0].count : 0;
+    const totalPages = Math.ceil(totalServices / limitNum);
+
+    // --- LOGGING: Show the results of the aggregation ---
+    console.log(`[services.js] Aggregation found ${services.length} services for page ${pageNum}. Total services: ${totalServices}.`);
+    if (services.length > 0) {
+      console.log('[services.js] First service result:', services[0]);
+    }
+
+    res.json({ services, totalPages });
 
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('[services.js] Critical error in GET /services:', error);
+    res.status(500).json({ error: 'An internal server error occurred.', details: error.message });
   }
 });
 

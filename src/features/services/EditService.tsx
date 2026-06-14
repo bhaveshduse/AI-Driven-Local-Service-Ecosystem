@@ -61,7 +61,7 @@ export const EditService: React.FC = () => {
   const fetchService = useCallback(async () => {
     if (!id || !token) return;
     try {
-      const data = await getServiceById(id, token);
+      const data = await getServiceById(id);
       // --- FIX: Merge fetched data with initial data to prevent uncontrolled inputs ---
       // This ensures all form fields have a defined value (e.g., '' or []) even if the API response omits them.
       setService({
@@ -197,7 +197,7 @@ export const EditService: React.FC = () => {
     formData.append('existingImages', JSON.stringify(existingImageUrls));
 
     try {
-      await saveService(formData, token, id);
+      await saveService(formData, id);
 
       toast.success(`Service ${id ? 'updated' : 'created'} successfully!`);
       navigate('/vendor/services');

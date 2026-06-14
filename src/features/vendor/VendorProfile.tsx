@@ -6,16 +6,28 @@ import Avatar from "../../components/Avatar";
 import ChangePasswordForm from "../../components/ChangePasswordForm";
 import { toast } from 'react-hot-toast';
 import { getImageUrl } from "../../utils/helpers";
+import { getCategories } from '../../services/categoryService';
+import apiClient from '../../services/apiClient';
 
 interface Category {
-  id: string;
+  _id: string;
   name: string;
+  slug: string;
 }
+
+export const experienceLevels = [
+  { value: 1, label: 'Beginner (0–1 year)', displayText: '0-1 years experience' },
+  { value: 3, label: 'Intermediate (2–4 years)', displayText: '2-4 years experience' },
+  { value: 5, label: 'Moderate (5–9 years)', displayText: '5-9 years experience' },
+  { value: 10, label: 'Experienced (10+ years)', displayText: '10+ years experience' },
+] as const;
 
 interface ProfileFormData {
   businessName: string;
   experience: number;
+  primaryCategory: string;
   serviceCategories: string[];
+  suggestedCategory: string;
   description: string;
   cities: string;
   city: string;
@@ -45,6 +57,8 @@ export const VendorProfile = () => {
     defaultValues: {
       businessName: '',
       experience: 1,
+      primaryCategory: '',
+      suggestedCategory: '',
       serviceCategories: [],
       description: '',
       cities: '',
@@ -62,12 +76,8 @@ export const VendorProfile = () => {
   // Fetch vendor profile when component mounts
   useEffect(() => {
     const fetchCategories = async () => {
-      try {
-        const res = await fetch("/api/services/categories/list");
-        if (res.ok) {
-          const data = await res.json();
-          setCategories(data);
-        }
+      try { 
+        setCategories(await getCategories());
       } catch (err) {
         // Silently fail on categories; the form is still usable.
       }
@@ -76,14 +86,13 @@ export const VendorProfile = () => {
     const fetchVendor = async () => {
       if (!token) return;
       try {
-        const res = await fetch("/api/vendors/profile", {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
-        const data = await res.json();
-
+        const { data } = await apiClient.get('/vendors/profile');
+        
         reset({
           businessName: data.businessName || '',
           experience: Number(data.experience) || 1,
+          primaryCategory: data.primaryCategory || '',
+          suggestedCategory: data.suggestedCategory || '',
           serviceCategories: data.serviceCategories || [],
           description: data.description || '',
           cities: (data.serviceArea?.cities || []).join(', '),
@@ -111,21 +120,12 @@ export const VendorProfile = () => {
     formData.append('avatar', file);
 
     try {
-        const res = await fetch('/api/users/profile/avatar', {
-            method: 'PUT',
-            headers: { 'Authorization': `Bearer ${token}` },
-            body: formData,
+        const { data: updatedUser } = await apiClient.put('/users/profile/avatar', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
         });
 
-        if (!res.ok) {
-            const errorData = await res.json();
-            throw new Error(errorData.error || 'Failed to upload avatar.');
-        }
-
-        const updatedUser = await res.json();
         updateUser(updatedUser); // Update context
         toast.success('Avatar updated successfully!');
-
     } catch (error: any) {
         toast.error(error.message || 'Failed to upload avatar.');
     } finally {
@@ -141,7 +141,9 @@ export const VendorProfile = () => {
       const formData = new FormData();
       formData.append("businessName", data.businessName);
       formData.append("experience", data.experience.toString());
+      formData.append("primaryCategory", data.primaryCategory);
       formData.append("serviceCategories", JSON.stringify(data.serviceCategories));
+      formData.append("suggestedCategory", data.suggestedCategory);
       formData.append("description", data.description);
       formData.append("cities", JSON.stringify(data.cities.split(",").map((c) => c.trim())));
       formData.append("city", data.city);
@@ -153,13 +155,9 @@ export const VendorProfile = () => {
         formData.append("identityProof", data.identityProof[0]);
       }
 
-      const res = await fetch("/api/vendors/profile", {
-        method: "PUT",
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData,
+      await apiClient.put("/vendors/profile", formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
-
-      if (!res.ok) throw new Error("Failed to update");
 
       toast.success("Profile updated successfully!");
     } catch (error: any) {
@@ -258,33 +256,53 @@ export const VendorProfile = () => {
                       {...register("experience", { valueAsNumber: true })}
                       className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                     >
-                      <option value={1}>Beginner (0–1 year)</option>
-                      <option value={3}>Intermediate (2–4 years)</option>
-                      <option value={5}>Moderate (5–9 years)</option>
-                      <option value={10}>Experienced (10+ years)</option>
+                      {experienceLevels.map(level => (
+                        <option key={level.value} value={level.value}>{level.label}</option>
+                      ))}
                     </select>
                   </div>
 
-                  {/* Categories */}
+                  {/* Primary Category */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Service Categories
+                      Primary Service Category
+                    </label>
+                    <p className="text-xs text-gray-500 mb-2">This is your main area of expertise and will be featured on your profile.</p>
+                    <select
+                      {...register("primaryCategory", { required: "Please select your main category." })}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">-- Select Primary Category --</option>
+                      {categories.map((category) => (
+                        <option key={category._id} value={category.slug}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </select>
+                    {errors.primaryCategory && <p className="text-red-500 text-sm mt-1">{errors.primaryCategory.message}</p>}
+                  </div>
+
+                  {/* Additional Categories */}
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Additional Service Categories
                     </label>
                     <Controller
                       name="serviceCategories"
                       control={control}
-                      rules={{ validate: value => value.length > 0 || 'Please select at least one category.' }}
+                      // This field is now optional, as the primary category is required.
+                      // The primary category is automatically included on the backend.
                       render={({ field }) => (
                         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                          {categories.map((category) => (
-                            <label key={category.id} className="flex items-center space-x-2">
+                          {categories.map((category) => ( // The bug was here. It should use `category.slug` not `category.id`
+                            <label key={category._id} className="flex items-center space-x-2">
                               <input
                                 type="checkbox"
-                                checked={field.value.includes(category.id)}
+                                checked={field.value.includes(category.slug)}
                                 onChange={() => {
-                                  const newCategories = field.value.includes(category.id)
-                                    ? field.value.filter((c) => c !== category.id)
-                                    : [...field.value, category.id];
+                                  const newCategories = field.value.includes(category.slug)
+                                    ? field.value.filter((c) => c !== category.slug)
+                                    : [...field.value, category.slug];
                                   field.onChange(newCategories);
                                 }}
                                 className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
@@ -297,7 +315,21 @@ export const VendorProfile = () => {
                         </div>
                       )}
                     />
-                    {errors.serviceCategories && <p className="text-red-500 text-sm mt-1">{errors.serviceCategories.message}</p>}
+                  </div>
+
+                  {/* Custom Category Suggestion */}
+                  <div>
+                    <label htmlFor="suggestedCategory" className="block text-sm font-medium text-gray-700 mb-2">
+                      Don't see your category? Suggest a new one.
+                    </label>
+                    <p className="text-xs text-gray-500 mb-2">An admin will review your suggestion. If approved, it will be added to your profile.</p>
+                    <input
+                      type="text"
+                      id="suggestedCategory"
+                      {...register("suggestedCategory")}
+                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                      placeholder="e.g., Antique Clock Repair"
+                    />
                   </div>
 
                   {/* Description */}
@@ -359,6 +391,8 @@ export const VendorProfile = () => {
                         >
                           <option value={5}>Up to 5 km</option>
                           <option value={10}>Up to 10 km</option>
+                          <option value={15}>Up to 15 km</option>
+                          <option value={25}>Up to 25 km</option>
               
                         </select>
                       </div>

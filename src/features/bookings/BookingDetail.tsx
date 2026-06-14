@@ -1,8 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import apiClient from '../../services/apiClient';
 import { Calendar, Clock, MapPin, Star, User, Briefcase, Edit, Save, X, AlertCircle, Phone, Mail, IndianRupee, ShieldCheck, CheckCircle } from 'lucide-react';
 import { toast } from 'react-hot-toast';
+import PaymentUploadBox from '../../components/PaymentUploadBox';
+
+interface AddOn {
+  _id: string;
+  description: string;
+  amount: number;
+  status: 'pending' | 'approved' | 'rejected';
+  createdAt: string;
+  paid?: boolean;
+}
 
 interface Booking {
   _id: string;
@@ -36,6 +47,8 @@ interface Booking {
   status: string;
   price: {
     amount: number;
+    platformFee: number;
+    vendorPayout: number;
   };
   payment?: {
     status: string;
@@ -59,6 +72,7 @@ interface Booking {
       role: string;
     };
   };
+  addOns?: AddOn[];
   otp?: string; // Added for consistency
   createdAt: string;
 }
@@ -92,13 +106,10 @@ export const BookingDetail: React.FC = () => {
     if (!token || !id) return;
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/bookings/${id}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!response.ok) {
+      const { data } = await apiClient.get<Booking>(`/bookings/${id}`);
+      if (!data) {
         throw new Error('Booking not found or you do not have permission to view it.');
       }
-      const data: Booking = await response.json();
       setBooking(data);
       // Initialize edit form data
       const scheduled = new Date(data.scheduledDate);
@@ -125,11 +136,8 @@ export const BookingDetail: React.FC = () => {
     const fetchOtp = async () => {
       if (booking && user?.role === 'customer' && booking.status === 'verification-pending' && !booking.otp && token) {
         try {
-          const response = await fetch(`/api/bookings/${booking._id}/otp`, {
-            headers: { 'Authorization': `Bearer ${token}` },
-          });
-          if (response.ok) {
-            const data = await response.json();
+          const { data } = await apiClient.get(`/bookings/${booking._id}/otp`);
+          if (data) {
             // Use a functional update to avoid stale state issues
             setBooking(prev => prev ? { ...prev, otp: data.otp } : null);
           }
@@ -152,23 +160,11 @@ export const BookingDetail: React.FC = () => {
     }
 
     try {
-      const response = await fetch(`/api/bookings/${booking._id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          scheduledDate: scheduledDate.toISOString(),
-          address: editData.address,
-          notes: editData.notes
-        })
+      await apiClient.put(`/bookings/${booking._id}`, {
+        scheduledDate: scheduledDate.toISOString(),
+        address: editData.address,
+        notes: editData.notes
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to save changes.');
-      }
 
       toast.success('Booking updated successfully!');
       setIsEditing(false);
@@ -185,19 +181,7 @@ export const BookingDetail: React.FC = () => {
     }
     setIsSubmittingReport(true);
     try {
-        const response = await fetch(`/api/bookings/${booking._id}/report`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify({ reason: reportReason, description: reportDescription })
-        });
-
-        if (!response.ok) {
-            const data = await response.json();
-            throw new Error(data.error || 'Failed to report issue.');
-        }
+        await apiClient.post(`/bookings/${booking._id}/report`, { reason: reportReason, description: reportDescription });
 
         toast.success('Issue reported successfully. An admin will review it shortly.');
         setIsReporting(false);
@@ -206,7 +190,7 @@ export const BookingDetail: React.FC = () => {
         fetchBooking(); // Refetch to show updated status
 
     } catch (error: any) {
-        toast.error(`Error: ${error.message}`);
+        toast.error(`Error: ${error.response?.data?.error || error.message}`);
     } finally {
         setIsSubmittingReport(false);
     }
@@ -220,19 +204,7 @@ export const BookingDetail: React.FC = () => {
       const body: any = { status: newStatus };
       if (otp) body.otp = otp;
 
-      const response = await fetch(`/api/bookings/${booking._id}/status`, {
-        method: 'PATCH',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to update status');
-      }
+      await apiClient.patch(`/bookings/${booking._id}/status`, body);
 
       toast.success('Booking status updated!');
       
@@ -249,33 +221,22 @@ export const BookingDetail: React.FC = () => {
     }
   };
 
+  const handleAddOnResponse = async (addOnId: string, responseStatus: 'approved' | 'rejected') => {
+    if (!booking) return;
+    const toastId = toast.loading(`Submitting your response...`);
+    try {
+      await apiClient.patch(`/bookings/${booking._id}/addons/${addOnId}`, { status: responseStatus });
+      toast.success(`Add-on ${responseStatus}.`, { id: toastId });
+      fetchBooking(); // Refresh to get the latest state
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || "Failed to respond.", { id: toastId });
+    }
+  };
+
   const canEdit = user && booking && (user.role === 'customer' && user.id === booking.customer._id) && ['pending', 'confirmed'].includes(booking.status);
 
   if (isLoading) return <div className="p-8 text-center">Loading booking details...</div>;
   if (!booking) return <div className="p-8 text-center">Booking not found.</div>;
-
-  const renderField = (label: string, value: React.ReactNode, icon: React.ReactNode, isEditable: boolean, fieldName: string, subFields?: string[]) => {
-    if (isEditing && isEditable) {
-      if (fieldName === 'scheduledDate') {
-        return (
-          <div className="grid grid-cols-2 gap-2">
-            <input type="date" value={editData.date} onChange={e => setEditData(p => ({ ...p, date: e.target.value }))} className="w-full p-2 border rounded" />
-            <input type="time" value={editData.time} onChange={e => setEditData(p => ({ ...p, time: e.target.value }))} className="w-full p-2 border rounded" />
-          </div>
-        );
-      }
-      if (fieldName === 'address' && subFields) {
-        return (
-          <div className="space-y-2">
-            <input type="text" placeholder="Street" value={editData.address.street} onChange={e => setEditData(p => ({ ...p, address: { ...p.address, street: e.target.value } }))} className="w-full p-2 border rounded" />
-            <input type="text" placeholder="City" value={editData.address.city} onChange={e => setEditData(p => ({ ...p, address: { ...p.address, city: e.target.value } }))} className="w-full p-2 border rounded" />
-            <input type="text" placeholder="ZIP Code" value={editData.address.zipCode} onChange={e => setEditData(p => ({ ...p, address: { ...p.address, zipCode: e.target.value } }))} className="w-full p-2 border rounded" />
-          </div>
-        );
-      }
-    }
-    return <>{value}</>;
-  };
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
@@ -329,6 +290,32 @@ export const BookingDetail: React.FC = () => {
             </div>
           )}
 
+          {/* Refund Status Banner */}
+          {booking.status === 'cancelled' && booking.payment && ['refund_pending', 'refunded'].includes(booking.payment.status) && (
+            <div className={`mb-6 p-4 border rounded-lg flex items-start ${booking.payment.status === 'refunded' ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
+              <AlertCircle className={`h-6 w-6 mr-3 flex-shrink-0 ${booking.payment.status === 'refunded' ? 'text-green-600' : 'text-yellow-600'}`} />
+              <div>
+                <p className={`font-semibold ${booking.payment.status === 'refunded' ? 'text-green-800' : 'text-yellow-800'}`}>
+                  {booking.payment.status === 'refunded' ? 'Refund Processed' : 'Refund Pending'}
+                </p>
+                <p className={`text-sm ${booking.payment.status === 'refunded' ? 'text-green-700' : 'text-yellow-700'}`}>
+                  {booking.payment.status === 'refunded' ? 'Your money has been successfully refunded. It may take 3-5 business days to reflect in your account.' : 'This booking was auto-cancelled because the vendor did not start on time. Your payment is currently being held securely and has been flagged for our admin to process your refund shortly.'}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Payment Upload Box (For manual escrow payments) */}
+          {user?.role === 'customer' && booking && (
+            <PaymentUploadBox
+              booking={booking}
+              onStatusUpdate={(updatedBooking) => {
+                setBooking(updatedBooking as Booking | null);
+                fetchBooking();
+              }}
+            />
+          )}
+
           {isEditing && <div className="mb-4 p-3 bg-yellow-50 text-yellow-700 rounded-lg flex items-center"><AlertCircle size={16} className="mr-2"/><span>You are in edit mode.</span></div>}
 
           {/* Details Grid */}
@@ -340,14 +327,31 @@ export const BookingDetail: React.FC = () => {
                 <Calendar className="h-5 w-5 text-gray-400 mt-1" />
                 <div>
                   <p className="font-medium">Date & Time</p>
-                  {renderField('', new Date(booking.scheduledDate).toLocaleString('en-GB'), null, true, 'scheduledDate')}
+                  {isEditing ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="date" value={editData.date} onChange={e => setEditData(p => ({ ...p, date: e.target.value }))} className="w-full p-2 border rounded" />
+                      <input type="time" value={editData.time} onChange={e => setEditData(p => ({ ...p, time: e.target.value }))} className="w-full p-2 border rounded" />
+                    </div>
+                  ) : (
+                    <p>{new Date(booking.scheduledDate).toLocaleString('en-GB')}</p>
+                  )}
                 </div>
               </div>
               <div className="flex items-start space-x-4">
                 <MapPin className="h-5 w-5 text-gray-400 mt-1" />
                 <div>
                   <p className="font-medium">Address</p>
-                  {renderField('', `${booking.address.street}, ${booking.address.city}, ${booking.address.zipCode}`, null, true, 'address', ['street', 'city', 'zipCode'])}
+                  {isEditing ? (
+                    <div className="space-y-2">
+                      <input type="text" placeholder="Street" value={editData.address.street} onChange={e => setEditData(p => ({ ...p, address: { ...p.address, street: e.target.value } }))} className="w-full p-2 border rounded" />
+                      <input type="text" placeholder="City" value={editData.address.city} onChange={e => setEditData(p => ({ ...p, address: { ...p.address, city: e.target.value } }))} className="w-full p-2 border rounded" />
+                      <input type="text" placeholder="ZIP Code" value={editData.address.zipCode} onChange={e => setEditData(p => ({ ...p, address: { ...p.address, zipCode: e.target.value } }))} className="w-full p-2 border rounded" />
+                    </div>
+                  ) : (
+                    <p>
+                      {booking.address.street}, {booking.address.city}, {booking.address.zipCode}
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -360,18 +364,26 @@ export const BookingDetail: React.FC = () => {
                 <div>
                   <p className="font-medium">Customer</p>
                   <p>{booking.customer.name}</p>
-                  <a href={`mailto:${booking.customer.email}`} className="text-sm text-blue-600 flex items-center gap-1"><Mail size={14}/>{booking.customer.email}</a>
-                  <a href={`tel:${booking.customer.phone}`} className="text-sm text-blue-600 flex items-center gap-1"><Phone size={14}/>{booking.customer.phone}</a>
+                  {booking.customer.email && <a href={`mailto:${booking.customer.email}`} className="text-sm text-blue-600 flex items-center gap-1"><Mail size={14}/>{booking.customer.email}</a>}
+                  {booking.customer.phone && <a href={`tel:${booking.customer.phone}`} className="text-sm text-blue-600 flex items-center gap-1"><Phone size={14}/>{booking.customer.phone}</a>}
                 </div>
               </div>
               <div className="flex items-start space-x-4">
                 <Briefcase className="h-5 w-5 text-gray-400 mt-1" />
                 <div>
                   <p className="font-medium">Vendor</p>
-                  <p>{booking.vendor.businessName}</p>
-                  <p className="text-sm text-gray-500">{booking.vendor.user.name}</p>
-                  <a href={`mailto:${booking.vendor.user.email}`} className="text-sm text-blue-600 flex items-center gap-1"><Mail size={14}/>{booking.vendor.user.email}</a>
-                  <a href={`tel:${booking.vendor.user.phone}`} className="text-sm text-blue-600 flex items-center gap-1"><Phone size={14}/>{booking.vendor.user.phone}</a>
+                  {user?.role === 'customer' && !['confirmed', 'in-progress', 'completed', 'verification-pending', 'reported'].includes(booking.status) ? (
+                    <div className="mt-2 p-3 bg-gray-100 rounded-lg text-sm text-gray-600 italic border border-gray-200">
+                      Vendor details are hidden until your payment is verified by the admin.
+                    </div>
+                  ) : (
+                    <>
+                      <p>{booking.vendor.businessName}</p>
+                      <p className="text-sm text-gray-500">{booking.vendor.user.name}</p>
+                      {booking.vendor.user.email && <a href={`mailto:${booking.vendor.user.email}`} className="text-sm text-blue-600 flex items-center gap-1"><Mail size={14}/>{booking.vendor.user.email}</a>}
+                      {booking.vendor.user.phone && <a href={`tel:${booking.vendor.user.phone}`} className="text-sm text-blue-600 flex items-center gap-1"><Phone size={14}/>{booking.vendor.user.phone}</a>}
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -402,7 +414,7 @@ export const BookingDetail: React.FC = () => {
           <div className="mt-8">
             <h3 className="text-lg font-semibold border-b pb-2 mb-4">Booking History</h3>
             <ul className="space-y-4">
-              {booking.timeline.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).map((item, index) => (
+              {booking.timeline?.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).map((item, index) => (
                 <li key={index} className="flex items-start space-x-3">
                   <div className="flex-shrink-0 mt-1.5">
                     <div className="w-3 h-3 bg-blue-500 rounded-full"></div>

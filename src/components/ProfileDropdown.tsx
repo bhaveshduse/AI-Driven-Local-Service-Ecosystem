@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { User as UserIcon, LogOut, LayoutDashboard, UserCog, Shield, Upload, Loader2 } from 'lucide-react';
 import Avatar from './Avatar';
 import { getImageUrl } from '../utils/helpers';
+import apiClient from '../services/apiClient';
 import { toast } from 'react-hot-toast';
 
 const ProfileDropdown: React.FC = () => {
@@ -31,18 +32,10 @@ const ProfileDropdown: React.FC = () => {
     formData.append('avatar', file);
 
     try {
-      const res = await fetch('/api/users/profile/avatar', {
-        method: 'PUT',
-        headers: { 'Authorization': `Bearer ${token}` },
-        body: formData,
+      const { data: updatedUser } = await apiClient.put('/users/profile/avatar', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
       });
 
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error || 'Failed to upload avatar.');
-      }
-
-      const updatedUser = await res.json();
       updateUser(updatedUser); // Update context
       toast.success('Avatar updated successfully!', { id: toastId });
     } catch (error: any) {
@@ -79,7 +72,7 @@ const ProfileDropdown: React.FC = () => {
   const getDashboardLink = () => {
     switch (user.role) {
       case 'vendor':
-        return '/vendor/dashboard';
+        return '/vendor-dashboard';
       case 'customer':
         return '/dashboard';
       case 'admin':

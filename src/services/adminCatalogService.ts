@@ -33,7 +33,7 @@ const getAuthJsonHeaders = (token: string) => ({
   'Content-Type': 'application/json',
 });
 
-const ADMIN_API_URL = '/api/admin/catalog';
+const ADMIN_API_URL = 'admin/catalog';
 
 // --- CATEGORY FUNCTIONS ---
 

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
+import apiClient from "../../services/apiClient";
 
 export default function ResetPassword() {
   const [password, setPassword] = useState("");
@@ -27,21 +28,11 @@ export default function ResetPassword() {
     setMessage("");
 
     try {
-      const response = await fetch("/api/auth/reset-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token, password }),
-      });
-
-      const data = await response.json();
-      if (response.ok) {
-        setMessage("Password reset successful. Redirecting to login...");
-        setTimeout(() => navigate("/login"), 2000);
-      } else {
-        setMessage(data.error || "Something went wrong.");
-      }
-    } catch {
-      setMessage("Network error.");
+      const { data } = await apiClient.post('/auth/reset-password', { token, password });
+      setMessage(data.message + " Redirecting to login...");
+      setTimeout(() => navigate("/login"), 2000);
+    } catch (error: any) {
+      setMessage(error.response?.data?.error || "Network error.");
     } finally {
       setLoading(false);
     }

@@ -18,7 +18,7 @@ const bookingSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'confirmed', 'in-progress', 'completed', 'cancelled', 'verification-pending', 'rejected', 'reported'],
+    enum: ['pending', 'awaiting-payment', 'confirmed', 'in-progress', 'completed', 'cancelled', 'verification-pending', 'rejected', 'reported'],
     default: 'pending'
   },
   scheduledDate: {
@@ -35,19 +35,24 @@ const bookingSchema = new mongoose.Schema({
   payment: {
     status: {
       type: String,
-      enum: ['pending', 'paid_to_platform', 'payout_pending', 'paid_to_vendor', 'refund_pending', 'refunded'],
+      enum: ['pending', 'paid_to_platform', 'payout_pending', 'paid_to_vendor', 'refund_pending', 'refunded', 'verification-pending'],
       default: 'pending'
     },
     transactionId: String, // Customer's payment transaction ID
     payoutId: String,      // Vendor's payout transaction ID
     paidAt: Date,
     payoutAt: Date,
+    screenshot: String,    // Path to the manual escrow screenshot
     notes: String
   },
   address: {
     street: String,
     city: String,
-    zipCode: String
+    zipCode: String,
+    coordinates: {
+      lat: Number,
+      lon: Number,
+    }
   },
   notes: {
     customerNotes: String,

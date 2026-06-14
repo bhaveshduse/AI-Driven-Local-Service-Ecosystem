@@ -1,11 +1,11 @@
 import express from 'express';
-import fetch from 'node-fetch';
 import Vendor from '../models/Vendor.js';
 import Service from '../models/Service.js';
 import Booking from '../models/Booking.js';
 import User from '../models/User.js';
 import Category from '../models/Category.js';
 import { authenticateToken, authorizeRole } from '../middleware/auth.js';
+import { geocodeAddress } from '../utils/geocoder.js'; // ✨ Import the reusable geocoder
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -85,10 +85,18 @@ router.put(
   ]),
   async (req, res) => {
     try {
+      // --- 0. Find the existing vendor to check their current status ---
+      const vendorToUpdate = await Vendor.findOne({ user: req.user._id });
+      if (!vendorToUpdate) {
+        return res.status(404).json({ error: 'Vendor profile not found.' });
+      }
+
       const {
         businessName,
         experience,
+        primaryCategory,
         serviceCategories,
+        suggestedCategory,
         description,
         cities,
         radius,
@@ -99,7 +107,7 @@ router.put(
         zipCode
       } = req.body;
 
-      // --- 1. Update User Document ---
+      // --- 1. Update Linked User Document ---
       const userUpdateData = {};
       if (req.files && req.files['profilePhoto']) {
         userUpdateData.avatar = req.files['profilePhoto'][0].path.replace(/\\/g, '/');
@@ -110,43 +118,35 @@ router.put(
         userUpdateData.city = city;
       }
 
+      // Consolidate service radius onto the User model for consistency
+      if (radius) {
+        userUpdateData.serviceRadiusKm = Number(radius);
+      }
+
       // --- NEW: Geocode address and prepare for update ---
       const addressForGeocoding = [street, city, state, zipCode].filter(Boolean).join(', ');
       if (addressForGeocoding) {
-        try {
-          console.log(`[Geocoding] Attempt 1: Fetching coordinates for full address: "${addressForGeocoding}"`);
+        console.log(`[Geocoding] Attempting to geocode address: "${addressForGeocoding}"`);
+        let coordinates = await geocodeAddress(addressForGeocoding);
 
-          const geocode = async (addressString) => {
-            if (!addressString) return [];
-            const geocodeUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addressString)}&format=json&limit=1`;
-            const response = await fetch(geocodeUrl, {
-              headers: { 'User-Agent': 'Swayam-App/1.0' }
-            });
-            if (!response.ok) return [];
-            return await response.json();
-          };
-
-          let geocodeData = await geocode(addressForGeocoding);
-
-          // If the full address fails, try a simpler version (city, state, zip)
-          if (!geocodeData || geocodeData.length === 0) {
-            const simplerAddress = [city, state, zipCode].filter(Boolean).join(', ');
-            console.warn(`[Geocoding] Attempt 1 failed. Attempt 2: Trying simpler address: "${simplerAddress}"`);
-            if (simplerAddress && simplerAddress !== addressForGeocoding) {
-              geocodeData = await geocode(simplerAddress);
-            }
+        // If the full address fails, try a simpler version as a fallback.
+        if (!coordinates) {
+          const simplerAddress = [city, state, zipCode].filter(Boolean).join(', ');
+          if (simplerAddress && simplerAddress !== addressForGeocoding) {
+            console.warn(`[Geocoding] Full address failed. Retrying with simpler address: "${simplerAddress}"`);
+            coordinates = await geocodeAddress(simplerAddress);
           }
+        }
 
-          if (geocodeData && geocodeData.length > 0) {
-            const { lat, lon } = geocodeData[0];
-            // Use dot notation to update nested fields
-            userUpdateData['address.coordinates'] = [parseFloat(lon), parseFloat(lat)];
-            console.log(`[Geocoding] Success. Found coordinates: [${lon}, ${lat}]`);
-          } else {
-            console.warn(`[Geocoding] All geocoding attempts failed for address: "${addressForGeocoding}"`);
-          }
-        } catch (geoError) {
-          console.error('[Geocoding] Error during geocoding process:', geoError);
+        if (coordinates) {
+          // The geocoder returns [lon, lat]
+          userUpdateData['address.coordinates'] = coordinates;
+          console.log(`[Geocoding] Success. Found coordinates: [${coordinates[0]}, ${coordinates[1]}]`);
+        } else {
+          console.warn(`[Geocoding] All geocoding attempts failed for address: "${addressForGeocoding}"`);
+          // To prevent accidentally wiping out existing coordinates if an address update fails geocoding,
+          // we can choose to not set the field at all. Or set it to null if that's the desired behavior.
+          // For now, we'll just log and not update coordinates.
         }
       }
 
@@ -159,18 +159,34 @@ router.put(
         await User.findByIdAndUpdate(req.user._id, { $set: userUpdateData });
       }
 
-      // --- 2. Update Vendor Document ---
+      // --- 2. Prepare Vendor Document Update ---      
+      const parsedServiceCategories = serviceCategories ? JSON.parse(serviceCategories) : [];
+
+      // Ensure primary category is included in the main list for easier searching.
+      if (primaryCategory && !parsedServiceCategories.includes(primaryCategory)) {
+        parsedServiceCategories.push(primaryCategory);
+      }
+
       const vendorUpdateData = {
         businessName,
         experience: Number(experience) || 0,
         description,
-        serviceCategories: serviceCategories ? JSON.parse(serviceCategories) : [],
+        primaryCategory,
+        // The list of categories now includes the primary one plus any additional ones.
+        serviceCategories: parsedServiceCategories,
+        suggestedCategory: suggestedCategory || '',
         'serviceArea.cities': cities ? JSON.parse(cities) : [],
-        'serviceArea.radius': radius ? Number(radius) : 10,
       };
 
+      // --- 3. Handle Verification Document Upload and Status Change ---
       if (req.files && req.files['identityProof']) {
         vendorUpdateData['documents.identityProof'] = req.files['identityProof'][0].path.replace(/\\/g, '/');
+        
+        // If vendor is submitting/re-submitting documents, move them to 'pending' status.
+        // This allows re-submission if they were previously 'rejected'.
+        if (['not-submitted', 'rejected'].includes(vendorToUpdate.verificationStatus)) {
+          vendorUpdateData.verificationStatus = 'pending';
+        }
       }
 
       const vendor = await Vendor.findOneAndUpdate(
@@ -336,16 +352,39 @@ router.patch(
   checkVendorVerification,
   async (req, res) => {
     try {
-      const { status, vendorNotes } = req.body;
+      let { status, vendorNotes } = req.body;
       // Corrected allowed statuses to match the Booking model enum.
       // A vendor can confirm, start, request completion (verification-pending), or cancel a booking.
-      const allowedVendorStatuses = ['confirmed', 'in-progress', 'verification-pending', 'cancelled'];
+      const allowedVendorStatuses = ['confirmed', 'awaiting-payment', 'in-progress', 'verification-pending', 'cancelled'];
       if (!allowedVendorStatuses.includes(status)) {
         return res.status(400).json({ error: `Invalid status update. Allowed statuses are: ${allowedVendorStatuses.join(', ')}.` });
       }
 
       const booking = await Booking.findById(req.params.bookingId);
       if (!booking) return res.status(404).json({ error: 'Booking not found.' });
+
+      // Intercept 'confirmed': If manual payment hasn't been made yet, force it to 'awaiting-payment'
+      if (status === 'confirmed' && booking.payment?.status === 'pending') {
+        status = 'awaiting-payment';
+      }
+
+      // Prevent vendor from starting a job before the customer has paid
+      if (status === 'in-progress' && booking.status !== 'confirmed') {
+        return res.status(400).json({ error: 'You can only start the job after the customer payment is verified and confirmed.' });
+      }
+
+      // Prevent vendor from starting a new job if they already have one actively running
+      if (status === 'in-progress') {
+        const activeJob = await Booking.findOne({
+          vendor: req.vendor._id,
+          _id: { $ne: booking._id },
+          status: { $in: ['in-progress', 'verification-pending'] }
+        });
+        
+        if (activeJob) {
+          return res.status(400).json({ error: 'You already have an active job in progress. Please complete it before starting a new one.' });
+        }
+      }
 
       booking.status = status;
       booking.notes = booking.notes || {};
@@ -357,6 +396,16 @@ router.patch(
       });
 
       await booking.save();
+
+      // Send real-time notification to the customer so their UI updates instantly
+      if (booking.customer) {
+        req.io.to(booking.customer.toString()).emit('booking-status-update', {
+          bookingId: booking._id.toString(),
+          status,
+          updatedBy: 'vendor'
+        });
+      }
+
       res.json(booking);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -376,15 +425,14 @@ router.get(
     try {
       const bookings = await Booking.find({
         vendor: req.vendor._id,
-        status: 'completed',
-        'pricing.paymentStatus': 'paid',
+        status: 'completed'
       });
 
-      const total = bookings.reduce((sum, b) => sum + (b.pricing?.totalAmount || 0), 0);
+      const total = bookings.reduce((sum, b) => sum + (b.price?.vendorPayout || (b.price?.amount * 0.90) || 0), 0);
       const thisMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
       const thisMonth = bookings
         .filter(b => b.createdAt >= thisMonthStart)
-        .reduce((sum, b) => sum + (b.pricing?.totalAmount || 0), 0);
+        .reduce((sum, b) => sum + (b.price?.vendorPayout || (b.price?.amount * 0.90) || 0), 0);
 
       res.json({
         total,
@@ -405,59 +453,76 @@ router.get(
   '/dashboard-stats',
   authenticateToken,
   authorizeRole(['vendor']),
-  checkVendorVerification,
+  // REMOVED: checkVendorVerification to allow unverified vendors to see their dashboard status
   async (req, res) => {
     try {
-      const vendorId = req.vendor._id;
+      const vendor = await Vendor.findOne({ user: req.user._id });
+      if (!vendor) {
+        return res.status(404).json({ error: 'Vendor profile not found.' });
+      }
 
-      // 1. Active Bookings
-      const activeBookings = await Booking.countDocuments({
-        vendor: vendorId,
-        status: { $in: ['pending', 'confirmed', 'in-progress', 'verification-pending'] }
-      });
+      let stats = { activeBookings: 0, completedServices: 0, totalRevenue: 0, avgRating: 0 };
+      let recentBookings = [];
+      let recentReviews = [];
 
-      // 2. Completed Services
-      const completedServices = await Booking.countDocuments({
-        vendor: vendorId,
-        status: 'completed'
-      });
+      if (vendor.verificationStatus === 'verified') {
+        const vendorId = vendor._id;
 
-      // 3. Total Revenue
-      const revenueResult = await Booking.aggregate([
-        { $match: { vendor: vendorId, status: 'completed' } },
-        { $group: { _id: null, total: { $sum: '$price.amount' } } }
-      ]);
-      const totalRevenue = revenueResult.length > 0 ? revenueResult[0].total : 0;
+        // 1. Active Bookings
+        const activeBookings = await Booking.countDocuments({
+          vendor: vendorId,
+          status: { $in: ['pending', 'confirmed', 'in-progress', 'verification-pending'] }
+        });
 
-      // 4. Average Rating
-      const ratingResult = await Booking.aggregate([
-        { $match: { vendor: vendorId, 'rating.score': { $exists: true } } },
-        { $group: { _id: null, avg: { $avg: '$rating.score' } } }
-      ]);
-      const avgRating = ratingResult.length > 0 ? ratingResult[0].avg : 0;
+        // 2. Completed Services
+        const completedServices = await Booking.countDocuments({
+          vendor: vendorId,
+          status: 'completed'
+        });
 
-      // 5. Recent Bookings
-      const recentBookings = await Booking.find({ vendor: vendorId })
-        .sort({ createdAt: -1 })
+        // 3. Total Revenue
+        const revenueResult = await Booking.aggregate([
+          { $match: { vendor: vendorId, status: 'completed' } },
+          { $group: { _id: null, total: { $sum: { $ifNull: ['$price.vendorPayout', { $multiply: ['$price.amount', 0.90] }] } } } }
+        ]);
+        const totalRevenue = revenueResult.length > 0 ? revenueResult[0].total : 0;
+
+        // 4. Average Rating
+        const ratingResult = await Booking.aggregate([
+          { $match: { vendor: vendorId, 'rating.score': { $exists: true } } },
+          { $group: { _id: null, avg: { $avg: '$rating.score' } } }
+        ]);
+        const avgRating = ratingResult.length > 0 ? ratingResult[0].avg : 0;
+
+        stats = { activeBookings, completedServices, totalRevenue, avgRating };
+
+        // 5. Recent Bookings
+        recentBookings = await Booking.find({ vendor: vendorId })
+          .sort({ createdAt: -1 })
+          .limit(5)
+          .populate('customer', 'name')
+          .populate('service', 'title');
+
+        // 6. Recent Reviews
+        recentReviews = await Booking.find({
+          vendor: vendorId,
+          status: 'completed',
+          'rating.review': { $exists: true, $ne: '' } // Find reviews with non-empty text
+        })
+        .sort({ 'rating.date': -1 })
         .limit(5)
         .populate('customer', 'name')
-        .populate('service', 'title');
-
-      // 6. Recent Reviews
-      const recentReviews = await Booking.find({
-        vendor: vendorId,
-        status: 'completed',
-        'rating.review': { $exists: true, $ne: '' } // Find reviews with non-empty text
-      })
-      .sort({ 'rating.date': -1 })
-      .limit(5)
-      .populate('customer', 'name')
-      .select('rating customer');
+        .select('rating customer');
+      }
 
       res.json({
-        stats: { activeBookings, completedServices, totalRevenue, avgRating },
+        stats,
         recentBookings,
-        recentReviews // Add recent reviews to the response
+        recentReviews,
+        vendor: {
+          verificationStatus: vendor.verificationStatus,
+          adminNotes: vendor.adminNotes,
+        }
       });
     } catch (err) {
       res.status(500).json({ error: err.message });

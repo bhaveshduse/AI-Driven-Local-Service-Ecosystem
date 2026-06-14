@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../../contexts/AuthContext";
+import apiClient from "../../services/apiClient";
 import {
   Calendar,
   Clock,
@@ -11,6 +12,7 @@ import {
   AlertCircle,
   X,
   Eye,
+  PlusCircle,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "react-hot-toast";
@@ -58,6 +60,12 @@ interface Booking {
     description: string;
     status: 'open' | 'under_review' | 'resolved';
   };
+  addOns?: {
+    _id: string;
+    description: string;
+    amount: number;
+    status: 'pending' | 'approved' | 'rejected' | 'cancelled'; // Added 'cancelled' for consistency
+  }[];
   otp?: string; // Added for real-time display
   createdAt: string;
 }
@@ -90,47 +98,31 @@ export const MyBookings = () => {
   const [disputeDescription, setDisputeDescription] = useState("");
   const [isSubmittingDispute, setIsSubmittingDispute] = useState(false);
 
+  // Add-on Modal State
+  const [addOnBooking, setAddOnBooking] = useState<Booking | null>(null);
+  const [addOnDescription, setAddOnDescription] = useState("");
+  const [addOnAmount, setAddOnAmount] = useState("");
+  const [isSubmittingAddOn, setIsSubmittingAddOn] = useState(false);
+
   const fetchBookings = useCallback(
     async (statusFilter: string) => {
-      if (!token) {
-        setIsLoading(false);
-        return;
-      }
       setIsLoading(true);
       setError(null);
       try {
-        const queryParams = new URLSearchParams();
-        if (statusFilter !== "all") {
-          // The 'filter' state now maps directly to a 'view'.
-          queryParams.set("view", statusFilter);
-        }
+        // Refactored to use apiClient (an Axios instance) for cleaner requests and error handling.
+        const response = await apiClient.get<Booking[]>("/bookings", {
+          params: statusFilter !== "all" ? { view: statusFilter } : {},
+        });
 
-        const response = await fetch(
-          `/api/bookings?${queryParams.toString()}`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          },
-        );
-        if (!response.ok) {
-          if (response.status === 401) {
-            logout();
-            toast.error("Session expired. Please log in again.");
-            // No need to throw, just stop execution
-          }
-          throw new Error("Failed to fetch bookings");
-        }
-        const data = await response.json();
+        const data = response.data;
 
-        // Replace booking list with fetched data, but preserve any live OTPs from the previous state
-        // for bookings that are still pending verification. This fixes the filtering issue.
+        // IMPORTANT: This logic is preserved from the original function.
+        // It prevents a bug where the OTP, fetched separately, would be
+        // wiped out from the UI state whenever the bookings are re-fetched (e.g., on filter change).
         setBookings((prevBookings) => {
           const oldBookingMap = new Map(prevBookings.map((b) => [b._id, b]));
           return data.map((newBooking: Booking) => {
             const oldBooking = oldBookingMap.get(newBooking._id);
-            // Only preserve OTP if the status is still 'verification-pending'.
-            // This prevents showing a stale OTP if the status changed on the backend.
             if (
               oldBooking?.otp &&
               newBooking.status === "verification-pending"
@@ -140,14 +132,24 @@ export const MyBookings = () => {
             return newBooking;
           });
         });
-      } catch (error) {
-        console.error("Error fetching bookings:", error);
-        setError("Failed to load bookings. Please try again later.");
+      } catch (err: any) {
+        console.error("Error fetching bookings:", err);
+
+        // Axios provides detailed error info, making status checks easier.
+        if (err.response?.status === 403 || err.response?.status === 401) {
+          logout();
+          toast.error("Access denied. Please log in again.");
+        } else {
+          setError("Failed to load bookings. Please try again later.");
+        }
       } finally {
         setIsLoading(false);
       }
     },
-    [token, filter, logout],
+    // 'logout' is a dependency for the error handler.
+    // The 'token' dependency is now implicitly handled by the apiClient instance.
+    // 'filter' was removed as it's passed directly, fixing a potential re-render loop.
+    [logout],
   );
 
   useEffect(() => {
@@ -169,29 +171,27 @@ export const MyBookings = () => {
   useEffect(() => {
     const fetchOtpForBooking = async (bookingId: string) => {
       try {
-        const response = await fetch(`/api/bookings/${bookingId}/otp`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (response.ok) {
-          const data = await response.json();
-          // Securely update the specific booking with the fetched OTP
-          setBookings((prev) =>
-            prev.map((b) =>
-              b._id === bookingId ? { ...b, otp: data.otp } : b,
-            ),
-          );
-        }
+        const response = await apiClient.get<{ otp: string }>(
+          `/bookings/${bookingId}/otp`,
+        );
+        const data = response.data;
+        // Securely update the specific booking with the fetched OTP
+        setBookings((prev) =>
+          prev.map((b) =>
+            b._id === bookingId ? { ...b, otp: data.otp } : b,
+          ),
+        );
       } catch (error) {
         console.error(`Failed to fetch OTP for booking ${bookingId}:`, error);
       }
     };
 
     // If there are bookings that need an OTP, fetch them.
-    if (bookingsNeedingOtp && token) {
+    if (bookingsNeedingOtp) {
       bookingsNeedingOtp.split(",").forEach((id) => fetchOtpForBooking(id));
     }
     // This effect now correctly depends on the stable string of IDs.
-  }, [bookingsNeedingOtp, token]);
+  }, [bookingsNeedingOtp]);
 
   useEffect(() => {
     // Guard: Only attach listeners if the socket is connected.
@@ -373,6 +373,31 @@ export const MyBookings = () => {
     }
   };
 
+  const handleAddOnSubmit = async () => {
+    if (!addOnBooking || !addOnDescription || !addOnAmount) {
+      toast.error("Please provide a description and amount.");
+      return;
+    }
+    setIsSubmittingAddOn(true);
+    try {
+      await apiClient.post(`/bookings/${addOnBooking._id}/addons`, {
+        description: addOnDescription,
+        amount: parseFloat(addOnAmount),
+      });
+      toast.success("Extra charge request sent to customer for approval.");
+      // Close modal and reset
+      setAddOnBooking(null);
+      setAddOnDescription("");
+      setAddOnAmount("");
+      fetchBookings(filter); // Refresh bookings
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || "Failed to add extra charge.");
+    } finally {
+      setIsSubmittingAddOn(false);
+    }
+  };
+
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "pending":
@@ -452,11 +477,23 @@ export const MyBookings = () => {
         {/* Bookings List */}
         {bookings.length > 0 ? (
           <div className="space-y-6">
-            {bookings.map((booking) => (
+            {bookings.map((booking) => {
+              const isActiveVendorJob = user?.role === "vendor" && ["in-progress", "verification-pending"].includes(booking.status);
+              
+              return (
               <div
                 key={booking._id}
-                className="bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-shadow"
+                className={`bg-white rounded-xl shadow-lg overflow-hidden hover:shadow-xl transition-shadow ${isActiveVendorJob ? 'ring-2 ring-red-500 shadow-red-100' : ''}`}
               >
+                {isActiveVendorJob && (
+                  <div className="bg-red-500 text-white px-6 py-1.5 flex items-center justify-center text-sm font-bold tracking-wider uppercase shadow-sm">
+                    <span className="relative flex h-2.5 w-2.5 mr-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-white"></span>
+                    </span>
+                    Active Job
+                  </div>
+                )}
                 <div className="p-6">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
@@ -476,7 +513,7 @@ export const MyBookings = () => {
                       )}
                       <p className="text-gray-600">
                         {user?.role === "customer"
-                          ? `by ${booking.vendor?.businessName || "Unknown Vendor"}`
+                          ? `by ${['confirmed', 'in-progress', 'completed', 'verification-pending', 'reported'].includes(booking.status) ? (booking.vendor?.businessName || "Unknown Vendor") : "Vendor (Hidden until payment verified)"}`
                           : user?.role === "admin"
                             ? `by ${booking.vendor?.businessName || "Unknown Vendor"} • for ${booking.customer?.name || "Unknown Customer"}`
                             : `for ${booking.customer?.name || "Unknown Customer"}`}
@@ -562,6 +599,33 @@ export const MyBookings = () => {
                         <Eye className="h-4 w-4" />
                         <span>Details</span>
                       </Link>
+
+                      {booking.status === "awaiting-payment" && user?.role === "customer" && (
+                        <Link
+                          to={`/bookings/${booking._id}`}
+                          className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-sm"
+                        >
+                          <span className="font-semibold">Pay Now</span>
+                        </Link>
+                      )}
+
+                      {booking.status === "awaiting-payment" && user?.role === "vendor" && (
+                        <button
+                          disabled={isUpdatingStatus === booking._id}
+                          onClick={() => {
+                            if (
+                              window.confirm(
+                                "Cancel this booking? The customer has not completed their payment yet, and this is blocking your schedule.",
+                              )
+                            )
+                              handleUpdateStatus(booking._id, "cancelled");
+                          }}
+                          className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                        >
+                          <X className="h-4 w-4" />
+                          <span>Cancel (Unpaid)</span>
+                        </button>
+                      )}
 
                       {/* Generic Report Button - for cases without a specific action button */}
                       {// For customers, show on these statuses
@@ -691,7 +755,7 @@ export const MyBookings = () => {
                           </div>
                         )}
 
-                      {booking.status === "in-progress" &&
+                      {["confirmed", "in-progress"].includes(booking.status) &&
                         user?.role === "vendor" && (
                           <div className="flex space-x-2">
                             <button
@@ -708,6 +772,14 @@ export const MyBookings = () => {
                               <span>Request Completion</span>
                             </button>
 
+                            <button
+                              onClick={() => setAddOnBooking(booking)}
+                              className="flex items-center space-x-2 px-4 py-2 border border-green-400 text-green-600 rounded-lg hover:bg-green-50 transition-colors"
+                              title="Add extra charges for additional work or materials."
+                            >
+                              <PlusCircle className="h-4 w-4" />
+                              <span>Add Charges</span>
+                            </button>
                             <button
                               disabled={isUpdatingStatus === booking._id}
                               onClick={() => {
@@ -799,7 +871,7 @@ export const MyBookings = () => {
                   </div>
                 )}
               </div>
-            ))}
+            )})}
           </div>
         ) : (
           <div className="bg-white rounded-xl shadow-lg p-12 text-center">
@@ -822,6 +894,59 @@ export const MyBookings = () => {
           </div>
         )}
       </div>
+
+      {/* Add-On Modal */}
+      {addOnBooking && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-gray-800">Add Extra Charges</h3>
+              <button onClick={() => setAddOnBooking(null)} className="text-gray-400 hover:text-gray-600">
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+            <p className="text-gray-600 mb-4">
+              Add charges for extra work or materials requested by the customer. They will need to approve this before it's added to the final bill.
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="addon-description" className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                <input
+                  id="addon-description"
+                  type="text"
+                  value={addOnDescription}
+                  onChange={(e) => setAddOnDescription(e.target.value)}
+                  placeholder="e.g., Extra 30 mins labor, new pipe fitting"
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label htmlFor="addon-amount" className="block text-sm font-medium text-gray-700 mb-2">Amount (₹)</label>
+                <input
+                  id="addon-amount"
+                  type="number"
+                  value={addOnAmount}
+                  onChange={(e) => setAddOnAmount(e.target.value)}
+                  placeholder="e.g., 500"
+                  className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end space-x-3">
+              <button onClick={() => setAddOnBooking(null)} className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50">
+                Cancel
+              </button>
+              <button
+                onClick={handleAddOnSubmit}
+                disabled={isSubmittingAddOn || !addOnDescription || !addOnAmount}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {isSubmittingAddOn ? "Sending..." : "Request Approval"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* OTP Verification Modal */}
       {verifyingBookingId && (

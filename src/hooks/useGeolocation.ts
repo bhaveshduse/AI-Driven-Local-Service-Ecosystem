@@ -1,8 +1,22 @@
 import { useState, useCallback } from 'react';
 
-interface LocationData {
-  coordinates: { lat: number; lng: number };
-  city: string | null;
+export interface NominatimAddress {
+  road?: string;
+  house_number?: string;
+  suburb?: string;
+  city?: string;
+  town?: string;
+  village?: string;
+  county?: string;
+  state?: string;
+  postcode?: string;
+  country?: string;
+  country_code?: string;
+}
+
+export interface LocationData {
+  coordinates: { lat: number; lon: number };
+  address: NominatimAddress | null;
 }
 
 /**
@@ -27,19 +41,20 @@ export const useGeolocation = () => {
       });
 
       const { latitude, longitude } = position.coords;
-      const coordinates = { lat: latitude, lng: longitude };
+      const coordinates = { lat: latitude, lon: longitude };
 
       const reverseGeocodeUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`;
       
-      const response = await fetch(reverseGeocodeUrl);
+      const response = await fetch(reverseGeocodeUrl, {
+        headers: { 'User-Agent': 'Swayam-App/1.0' } // Nominatim requires a User-Agent
+      });
       if (!response.ok) {
-        return { coordinates, city: null };
+        return { coordinates, address: null };
       }
 
       const data = await response.json();
-      const city = data.address?.city || data.address?.town || data.address?.village || null;
       
-      return { coordinates, city };
+      return { coordinates, address: data.address || null };
 
     } finally {
       setIsLoading(false);

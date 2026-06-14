@@ -7,6 +7,7 @@ import { toast } from 'react-hot-toast';
 import { CategoryModal } from '../../components/admin/CategoryModal';
 import { useCatalog } from '../../hooks/useCatalog';
 import { Category, Service } from '../../services/adminCatalogService';
+import { useAuth } from '../../contexts/AuthContext';
 
 export const CatalogManagement = () => {
   // Tab & View States
@@ -17,6 +18,9 @@ export const CatalogManagement = () => {
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [serviceSearch, setServiceSearch] = useState('');
   const [citySearch, setCitySearch] = useState('');
+
+  // Get user from auth context for role-based access control
+  const { user } = useAuth();
 
   // Use the central catalog hook for all data operations
   const { 
@@ -31,6 +35,11 @@ export const CatalogManagement = () => {
     toggleServiceStatus,
     deleteService 
   } = useCatalog(activeTab);
+
+  const isAdmin = user?.role === 'admin';
+
+  // --- DEBUG LOGS ---
+  // console.log("[CatalogManagement] Categories state:", categories); // Keep if needed for specific component state debugging
 
   // This function now expects a simple object with a name, not FormData.
   // The CategoryModal component should be updated to pass this simpler object.
@@ -53,12 +62,23 @@ export const CatalogManagement = () => {
     const cityQuery = citySearch.toLowerCase().trim();
 
     return services.filter(s => {
-      const titleMatch = titleQuery ? s.title.toLowerCase().includes(titleQuery) : true;
+      const titleMatch = titleQuery ? (s.title || "").toLowerCase().includes(titleQuery) : true;
       // Check vendor, user, and city existence before filtering
-      const cityMatch = cityQuery ? s.vendor?.user?.city?.toLowerCase().includes(cityQuery) : true;
+      const cityMatch = cityQuery ? (s.vendor?.user?.city || "").toLowerCase().includes(cityQuery) : true;
       return titleMatch && cityMatch;
     });
   }, [serviceSearch, citySearch, services]);
+
+  // Optimization: Convert categories array to a Map for O(1) lookups
+  const categoryMap = useMemo(() => {
+    const map = new Map<string, string>();
+    categories.forEach(cat => map.set(cat.slug, cat.name));
+    return map;
+  }, [categories]);
+
+  const getCategoryName = (slug: string) => {
+    return categoryMap.get(slug) || slug;
+  };
 
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
@@ -114,8 +134,8 @@ export const CatalogManagement = () => {
               <tbody className="divide-y divide-gray-100">
                 {/* Add New Category Row */}
                 <tr>
-                  <td colSpan={2} className="px-6 py-4">
-                    <button onClick={() => { setEditingCategory(null); setIsModalOpen(true); }} className="flex items-center space-x-2 text-sm text-blue-600 hover:text-blue-700 font-medium">
+                  <td colSpan={2} className="px-6 py-4 text-center">
+                    <button onClick={() => { setEditingCategory(null); setIsModalOpen(true); }} disabled={!isAdmin} className={`flex items-center justify-center space-x-2 text-sm font-medium transition-colors ${isAdmin ? 'text-blue-600 hover:text-blue-700' : 'text-gray-400 cursor-not-allowed'}`}>
                       <PlusCircle size={18} />
                       <span>Add New Category</span>
                     </button>
@@ -134,8 +154,12 @@ export const CatalogManagement = () => {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex justify-end space-x-2">
-                        <button onClick={() => { setEditingCategory(cat); setIsModalOpen(true); }} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg"><Edit size={18} /></button>
-                        <button onClick={() => deleteCategory(cat)} className="p-2 text-red-600 hover:bg-red-100 rounded-lg"><Trash2 size={18} /></button>
+                        {isAdmin && (
+                          <>
+                            <button onClick={() => { setEditingCategory(cat); setIsModalOpen(true); }} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg"><Edit size={18} /></button>
+                            <button onClick={() => deleteCategory(cat)} className="p-2 text-red-600 hover:bg-red-100 rounded-lg"><Trash2 size={18} /></button>
+                          </>
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -172,22 +196,28 @@ export const CatalogManagement = () => {
                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Service Title</th>
                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Vendor</th>
                 <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">City</th>
+                <th className="px-6 py-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Category</th>
                 <th className="px-6 py-4 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filteredServices.length > 0 ? filteredServices.map(s => (
                 <tr key={s._id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-6 py-4 font-semibold text-gray-800">{s.title}</td>
+                  <td className="px-6 py-4 font-semibold text-gray-800 max-w-[200px] truncate">{s.title}</td>
                   <td className="px-6 py-4 text-sm text-gray-600">{s.vendor?.businessName || 'Independent'}</td>
                   <td className="px-6 py-4 text-sm text-gray-600">{s.vendor?.user?.city || 'N/A'}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 capitalize">{getCategoryName(s.category)}</td>
                   <td className="px-6 py-4 text-right">
-                    <button onClick={() => deleteService(s._id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 size={18} /></button>
+                    {isAdmin && (
+                      <button onClick={() => deleteService(s._id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg">
+                        <Trash2 size={18} />
+                      </button>
+                    )}
                   </td>
                 </tr>
               )) : (
                 <tr>
-                  <td colSpan={4} className="px-6 py-10 text-center text-gray-400">No services found.</td>
+                  <td colSpan={5} className="px-6 py-10 text-center text-gray-400">No services found.</td>
                 </tr>
               )}
             </tbody>

@@ -15,10 +15,18 @@ const vendorSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Service'
   }],
+  primaryCategory: {
+    type: String, // This will store the slug of the category
+    trim: true
+  },
   serviceCategories: [{
     type: String,
     // The enum is removed to allow for dynamic categories from the Category collection.
   }],
+  suggestedCategory: {
+    type: String,
+    trim: true
+  },
   serviceArea: {
     radius: {
       type: Number,
@@ -74,8 +82,8 @@ const vendorSchema = new mongoose.Schema({
   portfolio: [String], // image URLs
   verificationStatus: {
       type: String,
-      enum: ['pending', 'verified', 'rejected'],
-      default: 'pending'
+      enum: ['not-submitted', 'pending', 'verified', 'rejected'],
+      default: 'not-submitted'
   },
   // 💡 Audit Trail Fields:
   verifiedBy: { // Who performed the verification
@@ -86,6 +94,10 @@ const vendorSchema = new mongoose.Schema({
   verificationDate: { // When the verification occurred
       type: Date,
       default: null
+  },
+  adminNotes: { // Notes from admin regarding verification status (e.g., rejection reason)
+    type: String,
+    default: ''
   }
 }, {
     timestamps: true

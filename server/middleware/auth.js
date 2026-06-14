@@ -15,6 +15,8 @@ export const authenticateToken = async (req, res, next) => {
       throw new Error('JWT_SECRET is not defined in environment variables.');
     }
     const decoded = jwt.verify(token, secret);
+    // FIX: The token is signed with `userId`, not `_id`.
+    // We must use `decoded.userId` to find the user.
     const user = await User.findById(decoded.userId);
 
 

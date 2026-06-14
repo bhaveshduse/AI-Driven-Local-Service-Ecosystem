@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react'; // Import useNavigate
 import { useAuth } from '../../contexts/AuthContext';
-import { toast } from 'react-hot-toast';
+import { toast } from 'react-hot-toast'; // Import useNavigate
 import { Check, X, Eye, RefreshCw, FileText } from 'lucide-react';
 
 // ===============================================
@@ -27,6 +27,7 @@ interface Vendor {
     portfolio: any[];
     verificationStatus: 'pending' | 'verified' | 'rejected';
     verifiedBy?: string;
+    adminNotes?: string; // Added adminNotes to Vendor interface
     verificationDate?: string;
     documents?: {
         identityProof?: string;
@@ -45,6 +46,7 @@ interface VendorApiResponse {
 // ===============================================
 
 const API_BASE_URL = '/api/admin';
+import { useNavigate } from 'react-router-dom';
 
 const VendorManagement: React.FC = () => {
     const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -53,8 +55,13 @@ const VendorManagement: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [currentPage, setCurrentPage] = useState<number>(1);
     const [totalPages, setTotalPages] = useState<number>(1);
-    const [filterStatus, setFilterStatus] = useState<'all' | Vendor['verificationStatus']>('all');
+    const [filterStatus, setFilterStatus] = useState<'all' | Vendor['verificationStatus'] | 'reported'>('all');
+    // States for rejection modal
+    const [showRejectReasonModal, setShowRejectReasonModal] = useState(false);
+    const [vendorToRejectId, setVendorToRejectId] = useState<string | null>(null);
+    const [rejectionReason, setRejectionReason] = useState('');
 
+    const navigate = useNavigate(); // Initialize useNavigate
     // --- Data Fetching ---
     const fetchVendors = useCallback(async () => {
         setIsLoading(true);
@@ -100,13 +107,19 @@ const VendorManagement: React.FC = () => {
     }, [currentPage, filterStatus, token]);
 
     // --- Verification/Action Handler ---
-    const handleVerificationAction = async (vendorId: string, isVerified: boolean) => {
+    const handleVerificationAction = async (vendorId: string, isVerified: boolean, notes?: string) => {
         if (!token) {
             toast.error("Admin token missing. Cannot perform action.");
+            console.error("[Admin Action] Token missing for verification action.");
             return;
         }
 
         const verificationStatus = isVerified ? 'verified' : 'rejected';
+        if (!isVerified) {
+            console.log(`[Admin Action] Attempting to reject vendor ${vendorId} with reason: "${notes}"`);
+        } else {
+            console.log(`[Admin Action] Attempting to verify vendor ${vendorId}`);
+        }
         const url = `${API_BASE_URL}/vendors/${vendorId}/verify`;
 
         try {
@@ -116,18 +129,45 @@ const VendorManagement: React.FC = () => {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify({ verificationStatus })
+                body: JSON.stringify({ verificationStatus, adminNotes: notes })
             });
 
             if (!response.ok) {
                 const errorData = await response.json();
+                console.error(`[Admin Action Error] Backend responded with status ${response.status} for vendor ${vendorId}:`, errorData);
                 throw new Error(errorData.error || `Failed to update status.`);
             }
 
+            console.log(`[Admin Action Success] Vendor ${vendorId} status updated to ${verificationStatus}.`);
             toast.success(`Vendor status updated to ${verificationStatus}`);
             fetchVendors();
         } catch (err: any) {
+            console.error(`[Admin Action Catch] Error in handleVerificationAction:`, err);
             toast.error(`Error updating vendor status: ${err.message}`);
+        }
+    };
+
+    // --- Rejection Modal Handlers ---
+    const handleViewVendorDetails = (vendorId: string) => {
+        navigate(`/admin/vendors/${vendorId}/details`);
+    };
+
+    const handleRejectClick = (vendorId: string) => {
+        console.log(`[Admin Action] Reject button clicked for vendor ID: ${vendorId}. Opening modal.`);
+        setVendorToRejectId(vendorId);
+        setShowRejectReasonModal(true);
+    };
+
+    const handleConfirmReject = async () => {
+        console.log(`[Admin Action] Confirm Reject button clicked. Vendor ID: ${vendorToRejectId}, Reason: "${rejectionReason}"`);
+        if (vendorToRejectId && rejectionReason.trim()) { // Ensure reason is not just whitespace
+            await handleVerificationAction(vendorToRejectId, false, rejectionReason);
+            console.log(`[Admin Action] Rejection confirmed and action dispatched for vendor ID: ${vendorToRejectId}.`);
+            setShowRejectReasonModal(false);
+            setRejectionReason('');
+        } else {
+            console.warn(`[Admin Action] Rejection not dispatched. Vendor ID: ${vendorToRejectId}, rejectionReason.trim(): "${rejectionReason.trim()}"`);
+            toast.error("Rejection reason cannot be empty.");
         }
     };
 
@@ -141,6 +181,11 @@ const VendorManagement: React.FC = () => {
     // --- Initial Load ---
     useEffect(() => {
         fetchVendors();
+    }, [fetchVendors]);
+
+    // Debugging useEffect for rejectionReason state changes
+    useEffect(() => {
+        console.log("[DEBUG] rejectionReason state changed:", rejectionReason);
     }, [fetchVendors]);
 
     // --- Render ---
@@ -172,6 +217,7 @@ const VendorManagement: React.FC = () => {
                     <option value="all">All Statuses</option>
                     <option value="pending">Pending Verification</option>
                     <option value="verified">Verified</option>
+                    {/* <option value="reported">Reported</option> // Removed as vendors don't have a 'reported' status directly */}
                     <option value="rejected">Rejected</option>
                 </select>
             </div>
@@ -189,7 +235,7 @@ const VendorManagement: React.FC = () => {
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">Categories</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[100px]">Joined</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[80px]">Status</th>
-                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[50px]">Active</th>
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[50px]">User Active</th>
                             <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider min-w-[120px]">Actions</th>
                         </tr>
                     </thead>
@@ -213,7 +259,7 @@ const VendorManagement: React.FC = () => {
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 text-sm text-gray-500 min-w-[50px]">{vendor.user?.isActive ? 'Yes' : 'No'}</td>
-                                    <td className="px-6 py-4 text-sm font-medium space-x-2 min-w-[120px]">
+                                    <td className="px-6 py-4 text-sm font-medium min-w-[160px]"> {/* Increased min-width for actions */}
                                         {/* Action buttons structure is already reasonably compact */}
                                         
                                         {vendor.documents?.identityProof && (
@@ -221,13 +267,13 @@ const VendorManagement: React.FC = () => {
                                                 title="View ID Proof"
                                                 onClick={() => handleViewDocument(vendor.documents!.identityProof!)}
                                                 className="text-blue-600 hover:text-blue-900 mr-2"
-                                            >
+                                            > 
                                                 <FileText className="h-5 w-5" />
                                             </button>
                                         )}
 
                                         {vendor.verificationStatus === 'pending' && (
-                                        <div className="flex space-x-2">
+                                        <div className="flex items-center space-x-2"> {/* Added flex container for buttons */}
                                             <button 
                                             title="Verify Vendor"
                                             onClick={() => handleVerificationAction(vendor._id, true)} 
@@ -237,7 +283,7 @@ const VendorManagement: React.FC = () => {
                                             </button>
                                             <button 
                                             title="Reject Vendor"
-                                            onClick={() => handleVerificationAction(vendor._id, false)} 
+                                            onClick={() => handleRejectClick(vendor._id)} 
                                             className="text-red-600 hover:text-red-900"
                                             >
                                             <X className="h-5 w-5" />
@@ -247,7 +293,7 @@ const VendorManagement: React.FC = () => {
                                         {vendor.verificationStatus === 'verified' && (
                                             <button 
                                                 title="Revoke Verification"
-                                                onClick={() => handleVerificationAction(vendor._id, false)} 
+                                                onClick={() => handleRejectClick(vendor._id)} 
                                                 className="text-red-600 hover:text-red-900"
                                             >
                                                 <X className="h-5 w-5" />
@@ -262,6 +308,14 @@ const VendorManagement: React.FC = () => {
                                                 <Check className="h-5 w-5" />
                                             </button>
                                         )}
+                                        {/* Add a button to view full details */}
+                                        <button
+                                            title="View Vendor Details"
+                                            onClick={() => handleViewVendorDetails(vendor._id)}
+                                            className="text-blue-600 hover:text-blue-900"
+                                        >
+                                            <Eye className="h-5 w-5" />
+                                        </button>
                                     </td>
                                 </tr>
                             ))
@@ -295,6 +349,57 @@ const VendorManagement: React.FC = () => {
                     >
                         Next
                     </button>
+                </div>
+            )}
+
+            {/* Reject Reason Modal */}
+            {showRejectReasonModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-xl font-bold text-gray-800">Reject Vendor Verification</h3>
+                            <button onClick={() => setShowRejectReasonModal(false)} className="text-gray-400 hover:text-gray-600">
+                                <X className="h-6 w-6" />
+                            </button>
+                        </div>
+                        
+                        <p className="text-gray-600 mb-4">
+                            Please provide a reason for rejecting this vendor's verification. This note will be visible to the vendor.
+                        </p>
+
+                        <div className="mb-4">
+                            <label htmlFor="rejection-reason" className="block text-sm font-medium text-gray-700 mb-2">
+                                Reason
+                            </label>
+                            <textarea
+                                id="rejection-reason"
+                                rows={4}
+                                value={rejectionReason}
+                                onChange={e => {
+                                    console.log("[Admin Action] Rejection reason textarea changed:", e.target.value);
+                                    setRejectionReason(e.target.value);
+                                }}
+                                placeholder="e.g., Identity proof unclear, Business license expired, Mismatched details."
+                                className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
+                            />
+                        </div>
+
+                        <div className="flex space-x-3">
+                            <button
+                                onClick={() => setShowRejectReasonModal(false)}
+                                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleConfirmReject}
+                                disabled={!rejectionReason.trim()}
+                                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                Confirm Rejection
+                            </button>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

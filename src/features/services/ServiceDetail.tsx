@@ -1,40 +1,109 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
-import { Star, MapPin, Clock, IndianRupee, User, Phone, Mail, Calendar, Flag, Lock, ShieldCheck } from 'lucide-react';
-import { toast } from 'react-hot-toast';
+import React, { useMemo } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { Star, MapPin, Clock, IndianRupee, Calendar, Flag, Lock, ShieldCheck, ImageOff } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import Avatar from '../../components/Avatar';
-import { getServiceById, Service } from '../../services/serviceService';
 import { getImageUrl } from '../../utils/helpers';
+import { useServiceDetail, type Service } from '../../hooks/useServiceDetail';
+import { experienceLevels } from '../vendor/VendorProfile';
 
+// --- Helper Functions (moved outside component for performance and clarity) ---
+
+/**
+ * Filters out empty or invalid items from a list of strings.
+ */
+const cleanList = (list: string[] | undefined): string[] => {
+  return (list ?? []).filter((item): item is string => 
+    typeof item === 'string' && item.trim().length > 0
+  );
+};
+
+/**
+ * Returns a user-friendly string for vendor experience level.
+ * Uses a shared constant to ensure consistency with the profile editor.
+ */
+const getExperienceText = (exp: number | undefined): string => {
+  if (exp === undefined || exp === null) return "New Provider";
+  // Find the corresponding display text from the shared constant
+  const level = experienceLevels.find(l => l.value === exp);
+  return level ? level.displayText : "New Provider";
+};
+
+/**
+ * Formats the service duration into a display string.
+ * Handles pluralization and invalid/zero values.
+ */
+const formatDuration = (duration: { value?: number; unit?: string } | undefined): string => {
+  const est = duration?.value;
+  const unit = duration?.unit?.toLowerCase();
+
+  if (typeof est === 'number' && est > 0 && unit) {
+    const isPlural = est > 1 && !unit.endsWith('s');
+    return `${est} ${unit}${isPlural ? 's' : ''}`;
+  }
+  return 'Not specified';
+};
+
+/**
+ * Centralizes all price formatting logic for consistency.
+ * Ensures amounts <= 0 are handled gracefully.
+ */
+const getPriceInfo = (pricing: Service['pricing']) => {
+  const isPriceValid = pricing && typeof pricing.amount === 'number' && pricing.amount > 0 && pricing.unit;
+
+  return {
+    amount: isPriceValid ? `₹${pricing.amount}` : 'N/A',
+    fullString: isPriceValid ? `₹${pricing.amount} / ${pricing.unit}` : 'Price not set',
+    sidebarUnit: pricing?.unit ?? 'per job',
+    mobileUnit: pricing?.unit, // Preserves original behavior (can be undefined)
+  };
+};
 
 export const ServiceDetail = () => {
   const { id } = useParams<{ id: string }>();
-  const { token, isLoading: authLoading, logout } = useAuth();
-  const [service, setService] = useState<Service | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const { token, user, isLoading: authLoading } = useAuth();
+  const { service, isLoading } = useServiceDetail(id);
 
-  const fetchService = useCallback(async () => {
-    try {
-      if (!id || !token) return;
-      const data = await getServiceById(id, token);
-      setService(data);
-    } catch (error: any) {
-      console.error('Error fetching service:', error);
-      if (error.response?.status === 401) {
-        logout();
-        toast.error("Session expired. Please log in again.");
-      }
-      // Use the more specific error from axios if available
-      toast.error(error.response?.data?.error || error.message || 'Could not load service.');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [id, token, logout]);
+  // --- FIX: Hooks and data processing must be called unconditionally at the top level. ---
+  // All data derived from `service` is memoized to prevent re-computation on every render
+  // and to respect the Rules of Hooks by being declared before any conditional returns.
+  const experienceText = useMemo(
+    () => getExperienceText(Number(service?.vendor?.experience)),
+    [service?.vendor?.experience],
+  );
 
-  useEffect(() => {
-    if (token) fetchService();
-  }, [token, fetchService]);
+  const durationText = useMemo(
+    () => formatDuration(service?.duration),
+    [service?.duration],
+  );
+
+  const priceInfo = useMemo(() => getPriceInfo(service?.pricing), [service?.pricing]);
+
+  const includedItems = useMemo(() => cleanList(service?.included), [service?.included]);
+  const excludedItems = useMemo(() => cleanList(service?.excluded), [service?.excluded]);
+  const requirementsItems = useMemo(() => cleanList(service?.requirements), [service?.requirements]);
+
+  const isOwnService = useMemo(
+    () => user?.id === service?.vendor?.user?._id,
+    [user?.id, service?.vendor?.user?._id],
+  );
+
+  const formattedRating = useMemo(() => {
+    const avg = service?.vendor?.user?.ratings?.average;
+    return typeof avg === 'number' ? avg.toFixed(1) : '0.0';
+  }, [service?.vendor?.user?.ratings?.average]);
+
+  const mailtoLink = useMemo(() => {
+    if (!service) return '';
+    const reportSubject = encodeURIComponent(`Report Vendor: ${service.vendor?.businessName}`);
+    const reportBody = encodeURIComponent(
+      `I would like to report an issue with vendor ${service.vendor?.businessName} (ID: ${service.vendor?._id}) regarding service "${service.title}".\n\nPlease describe the issue below:\n`
+    );
+    return `mailto:bapvesupp@gmail.com?subject=${reportSubject}&body=${reportBody}`;
+  }, [service]);
+
+  // This can be a simple constant as it only depends on `service._id`
+  const bookingUrl = service?._id ? `/book/${service._id}` : '#';
 
   // 1. Check if Auth is loading first
   if (authLoading) {
@@ -44,8 +113,7 @@ export const ServiceDetail = () => {
       </div>
     );
   }
-
-  // 2. If not logged in, show Lock Screen
+  // 2. If auth is done, but no token, show Lock Screen
   if (!token) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
@@ -69,7 +137,6 @@ export const ServiceDetail = () => {
       </div>
     );
   }
-
   // 3. If logged in but service loading
   if (isLoading) {
     return (
@@ -78,7 +145,6 @@ export const ServiceDetail = () => {
       </div>
     );
   }
-
   if (!service) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -91,6 +157,10 @@ export const ServiceDetail = () => {
       </div>
     );
   }
+  // Destructure for cleaner access and default values
+  // This is safe now because we've already returned if service is null.
+  const { vendor } = service;
+  const vendorUser = vendor.user;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -100,12 +170,16 @@ export const ServiceDetail = () => {
           <div className="lg:col-span-2">
             {/* Service Images */}
             <div className="bg-white rounded-xl shadow-lg overflow-hidden mb-8">
-              <div className="h-96 bg-gray-200">
-                <img
-                  src={getImageUrl(service.displayImage)}
-                  alt={service.title}
-                  className="w-full h-full object-cover"
-                />
+              <div className="h-96 bg-gray-100">
+                {service.displayImage ? (
+                  <img
+                    src={getImageUrl(service.displayImage)}
+                    alt={service.title}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center"><ImageOff className="w-16 h-16 text-gray-400" /></div>
+                )}
               </div>
             </div>
 
@@ -122,11 +196,15 @@ export const ServiceDetail = () => {
               <div className="flex items-center space-x-6 mb-6 text-gray-600">
                 <div className="flex items-center space-x-1">
                   <Clock className="h-5 w-5" />
-                  <span>{service.duration?.estimated ?? 'N/A'} {service.duration?.unit}</span>
+                  <span className="capitalize">
+                    {durationText}
+                  </span>
                 </div>
                 <div className="flex items-center space-x-1">
                   <IndianRupee className="h-5 w-5" />
-                  <span>₹{service.pricing?.amount ?? 'N/A'} {service.pricing?.unit}</span>
+                  <span className="capitalize">
+                    {priceInfo.fullString}
+                  </span>
                 </div>
               </div>
 
@@ -134,61 +212,69 @@ export const ServiceDetail = () => {
                 {service.description}
               </p>
 
-              {/* Call to Action Button */}
-              <div className="my-8 text-center lg:text-left">
+              {/* Call to Action Button - Hide if it's the vendor's own service */}
+              {!isOwnService && (
+                <div className="my-8 text-center lg:text-left">
                 <Link
-                  to={`/book/${service._id}`}
+                  to={bookingUrl}
                   className="inline-flex items-center justify-center bg-blue-600 text-white py-3 px-8 rounded-lg font-semibold hover:bg-blue-700 transition-colors text-lg shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
                 >
                   <Calendar className="mr-3 h-5 w-5" />
                   Book This Service
                 </Link>
-              </div>
+                </div>
+              )}
 
               {/* What's Included */}
-              {service.included && service.included.length > 0 && (
-                <div className="mb-8">
-                  <h3 className="text-xl font-semibold text-gray-800 mb-4">What's Included</h3>
+              <div className="mb-8">
+                <h3 className="text-xl font-semibold text-gray-800 mb-4">What's Included</h3>
+                {includedItems.length > 0 ? (
                   <ul className="space-y-2">
-                    {service.included.map((item, index) => (
-                      <li key={index} className="flex items-center space-x-2">
+                    {includedItems.map((item: string, index: number) => (
+                      <li key={`included-${index}`} className="flex items-center space-x-2">
                         <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                         <span className="text-gray-700">{item}</span>
                       </li>
                     ))}
                   </ul>
-                </div>
-              )}
+                ) : (
+                  <p className="text-gray-500 italic">Details not provided.</p>
+                )}
+              </div>
 
               {/* Requirements */}
-              {service.requirements && service.requirements.length > 0 && (
-                <div className="mb-8">
-                  <h3 className="text-xl font-semibold text-gray-800 mb-4">Customer Requirements</h3>
+              <div className="mb-8">
+                <h3 className="text-xl font-semibold text-gray-800 mb-4">Customer Requirements</h3>
+                {requirementsItems.length > 0 ? (
                   <ul className="space-y-2">
-                    {service.requirements.map((item, index) => (
-                      <li key={index} className="flex items-center space-x-2">
+                    {requirementsItems.map((item: string, index: number) => (
+                      <li key={`req-${index}`} className="flex items-center space-x-2">
                         <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
                         <span className="text-gray-700">{item}</span>
                       </li>
                     ))}
                   </ul>
-                </div>
-              )}
+                ) : (
+                  <p className="text-gray-500 italic">No specific requirements listed.</p>
+                )}
+              </div>
 
               {/* What's Not Included */}
-              {service.excluded && service.excluded.length > 0 && (
-                <div>
-                  <h3 className="text-xl font-semibold text-gray-800 mb-4">Not Included</h3>
+              <div>
+                <h3 className="text-xl font-semibold text-gray-800 mb-4">Not Included</h3>
+                {excludedItems.length > 0 ? (
                   <ul className="space-y-2">
-                    {service.excluded.map((item, index) => (
-                      <li key={index} className="flex items-center space-x-2">
+                    {excludedItems.map((item: string, index: number) => (
+                      <li key={`excluded-${index}`} className="flex items-center space-x-2">
                         <div className="w-2 h-2 bg-red-500 rounded-full"></div>
                         <span className="text-gray-700">{item}</span>
                       </li>
                     ))}
                   </ul>
-                </div>
-              )}
+                ) : (
+                  <p className="text-gray-500 italic">No specific exclusions listed.</p>
+                )}
+              </div>
             </div>
           </div>
 
@@ -198,46 +284,49 @@ export const ServiceDetail = () => {
             <div className="bg-white rounded-xl shadow-lg p-6 sticky top-24">
               <div className="text-center mb-6">
                 <div className="text-3xl font-bold text-gray-800 mb-2">
-                  ₹{service.pricing.amount}
+                  {priceInfo.amount}
                 </div>
-                <p className="text-gray-600">{service.pricing.unit}</p>
+                <p className="text-gray-600">{priceInfo.sidebarUnit}</p>
               </div>
 
-              <Link
-                to={`/book/${service._id}`}
-                className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-blue-700 transition-colors text-center block mb-4"
-              >
-                Book Now
-              </Link>
-
-              <div className="text-center text-sm text-gray-500">
-                Free cancellation up to 24 hours before service
-              </div>
+              {!isOwnService && (
+                <>
+                  <Link
+                    to={bookingUrl}
+                    className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-semibold hover:bg-blue-700 transition-colors text-center block mb-4"
+                  >
+                    Book Now
+                  </Link>
+                  <div className="text-center text-sm text-gray-500">
+                    Free cancellation up to 24 hours before service
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Vendor Info */}
             <div className="bg-white rounded-xl shadow-lg p-6">
               <h3 className="text-xl font-semibold text-gray-800 mb-4">Service Provider</h3>
-              
+
               <div className="flex items-center space-x-4 mb-4">
                 <Avatar 
-                  src={service.vendor?.user?.avatar ? getImageUrl(service.vendor.user.avatar) : ''} 
-                  name={service.vendor?.user?.name || 'Vendor'} 
+                  src={vendorUser?.avatar ? getImageUrl(vendorUser.avatar) : ''} 
+                  name={vendorUser?.name || 'Vendor'} 
                   className="h-16 w-16" 
                 />
                 <div>
                   <div className="flex items-center gap-2">
                     <h4 className="font-semibold text-gray-800">
-                      {service.vendor?.businessName || 'Unnamed Vendor'}
+                      {vendor?.businessName || 'Unnamed Vendor'}
                     </h4>
-                    {service.vendor?.verificationStatus === 'verified' && (
+                    {vendor?.verificationStatus === 'verified' && (
                       <span title="Verified Provider" className="bg-green-100 text-green-800 text-xs font-medium px-2.5 py-0.5 rounded-full flex items-center gap-1">
                         <ShieldCheck size={12} />
                         Verified
                       </span>
                     )}
                   </div>
-                  <p className="text-gray-600 text-sm">{service.vendor?.user?.name || 'Contact for details'}</p>
+                  <p className="text-gray-600 text-sm">{vendorUser?.name || 'Contact for details'}</p>
                 </div>
               </div>
 
@@ -246,25 +335,25 @@ export const ServiceDetail = () => {
                   <div className="flex items-center space-x-2">
                     <Star className="h-5 w-5 text-yellow-400 fill-current" />
                     <span className="font-medium text-gray-800">
-                      {service.vendor?.user?.ratings?.average?.toFixed(1) ?? '0.0'}
+                      {formattedRating}
                     </span>
                   </div>
                   <span className="text-sm text-gray-500">
-                    ({service.vendor?.user?.ratings?.count ?? 0} reviews)
+                    ({vendorUser?.ratings?.count ?? 0} reviews)
                   </span>
                 </div>
 
                 <div className="flex items-center space-x-2">
                   <MapPin className="h-5 w-5 text-gray-400" />
                   <span className="text-gray-600 text-sm">
-                    {service.vendor?.user?.address?.city ?? 'Contact for location'}, {service.vendor?.user?.address?.state}
+                    {vendorUser?.city || vendorUser?.address?.city || 'Contact for location'}{vendorUser?.address?.state ? `, ${vendorUser.address.state}` : ''}
                   </span>
                 </div>
 
                 <div className="flex items-center space-x-2">
                   <Calendar className="h-5 w-5 text-gray-400" />
                   <span className="text-gray-600 text-sm">
-                    {service.vendor?.experience ?? "New Provider"}+ years experience
+                    {experienceText}
                   </span>
                 </div>
               </div>
@@ -290,7 +379,7 @@ export const ServiceDetail = () => {
 
               <div className="mt-6 pt-4 border-t border-green-200">
                 <a
-                  href={`mailto:bapvesupp@gmail.com?subject=Report Vendor: ${service.vendor?.businessName}&body=I would like to report an issue with vendor ${service.vendor?.businessName} (ID: ${service.vendor?._id}) regarding service ${service.title}.`}
+                  href={mailtoLink}
                   className="flex items-center justify-center w-full space-x-2 px-4 py-2 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors text-sm font-medium"
                 >
                   <Flag className="h-4 w-4" />
@@ -306,20 +395,22 @@ export const ServiceDetail = () => {
       </div>
 
       {/* Floating booking bar for mobile */}
-      <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white p-4 border-t border-gray-200 shadow-[0_-2px_10px_rgba(0,0,0,0.1)]">
-        <div className="max-w-7xl mx-auto px-4 flex items-center justify-between gap-4">
-            <div>
-                <p className="text-lg font-bold text-gray-800">₹{service.pricing?.amount ?? 'N/A'}</p>
-                <p className="text-xs text-gray-500">{service.pricing?.unit}</p>
-            </div>
-            <Link
-                to={`/book/${service._id}`}
-                className="bg-blue-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-blue-700 transition-colors text-center"
-            >
-                Book Now
-            </Link>
+      {!isOwnService && (
+        <div className="lg:hidden fixed bottom-0 left-0 right-0 bg-white p-4 border-t border-gray-200 shadow-[0_-2px_10px_rgba(0,0,0,0.1)]">
+          <div className="max-w-7xl mx-auto px-4 flex items-center justify-between gap-4">
+              <div>
+                  <p className="text-lg font-bold text-gray-800">{priceInfo.amount}</p>
+                  <p className="text-xs text-gray-500">{priceInfo.mobileUnit}</p>
+              </div>
+              <Link
+                  to={bookingUrl}
+                  className="bg-blue-600 text-white py-3 px-6 rounded-lg font-semibold hover:bg-blue-700 transition-colors text-center"
+              >
+                  Book Now
+              </Link>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

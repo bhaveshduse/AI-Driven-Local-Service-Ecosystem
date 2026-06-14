@@ -37,6 +37,9 @@ interface Booking {
   price: {
     amount: number;
   };
+  payment?: {
+    status: string;
+  };
   address: {
     street: string;
     city: string;
@@ -265,6 +268,11 @@ export const AdminBookings = () => {
                   <p className="text-lg font-medium">{selectedBooking.service?.title || 'Service Unavailable'}</p>
                   <p className="text-gray-600 capitalize">{selectedBooking.service?.category || 'N/A'}</p>
                   <p className="text-blue-600 font-bold mt-1">₹{selectedBooking.price?.amount ?? 0}</p>
+                  {selectedBooking.payment && (
+                    <p className="text-sm mt-1 text-gray-600">
+                      Payment Status: <span className="font-semibold uppercase text-gray-800">{selectedBooking.payment.status.replace(/_/g, ' ')}</span>
+                    </p>
+                  )}
                 </div>
                 <div>
                   <h3 className="font-semibold text-gray-700 mb-2">Schedule</h3>
@@ -368,6 +376,16 @@ export const AdminBookings = () => {
                     >
                       <XCircle size={16} />
                       Force Cancel
+                    </button>
+                  )}
+                  {/* Handle Auto-cancelled Overdue Refund processing */}
+                  {selectedBooking.status === 'cancelled' && selectedBooking.payment?.status === 'refund_pending' && (
+                    <button
+                      onClick={() => handleProcessRefund(selectedBooking._id)}
+                      className="px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 flex items-center gap-2"
+                    >
+                      <CheckCircle size={16} />
+                      Process Refund
                     </button>
                   )}
                   {['completed', 'cancelled', 'rejected'].includes(selectedBooking.status) && (

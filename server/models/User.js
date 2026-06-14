@@ -24,6 +24,7 @@ const userSchema = new mongoose.Schema(
     phone: {
       type: String,
       required: true,
+      match: [/^(\+91)?[6-9]\d{9}$/, 'Please enter a valid 10-digit Indian phone number (optional +91 prefix).'],
       trim: true,
     },
     role: {
@@ -67,6 +68,12 @@ const userSchema = new mongoose.Schema(
         type: Number,
         default: 0,
       },
+    },
+
+    // 🔹 Vendor-specific fields for service area
+    serviceRadiusKm: {
+      type: Number,
+      default: 20, // Default service radius of 20km for vendors
     },
 
     // 🔹 Password reset fields

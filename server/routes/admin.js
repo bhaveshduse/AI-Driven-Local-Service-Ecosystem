@@ -27,11 +27,13 @@ router.get('/analytics', authorizeRole(['admin']), async (req, res) => {
     const totalBookings = await Booking.countDocuments();
     const completedBookings = await Booking.countDocuments({ status: 'completed' });
     
-    const totalRevenue = await Booking.aggregate([
-      // Correctly calculate revenue based on money paid to the platform,
-      // regardless of whether it has been paid out to the vendor yet.
+    const financialData = await Booking.aggregate([
       { $match: { 'payment.status': { $in: ['paid_to_platform', 'payout_pending', 'paid_to_vendor'] } } },
-      { $group: { _id: null, total: { $sum: '$price.amount' } } }
+      { $group: { 
+          _id: null, 
+          grossVolume: { $sum: '$price.amount' },
+          totalRevenue: { $sum: { $ifNull: ['$price.platformFee', { $multiply: ['$price.amount', 0.10] }] } }
+      } }
     ]);
 
     const monthlyBookings = await Booking.aggregate([
@@ -82,7 +84,8 @@ router.get('/analytics', authorizeRole(['admin']), async (req, res) => {
       totalVendors,
       totalBookings,
       completedBookings,
-      totalRevenue: totalRevenue[0]?.total || 0,
+      grossVolume: financialData[0]?.grossVolume || 0,
+      totalRevenue: financialData[0]?.totalRevenue || 0,
       monthlyBookings,
       revenueByCategory,
       recentReviews
@@ -184,7 +187,7 @@ router.get('/vendors', authorizeRole(['admin']), async (req, res) => {
           { $skip: skip },
           { $limit: limitNum },
           { $project: {
-              _id: 1, businessName: 1, verificationStatus: 1, createdAt: 1, serviceCategories: 1,
+              _id: 1, businessName: 1, verificationStatus: 1, createdAt: 1, serviceCategories: 1, 'documents.identityProof': 1,
               user: { _id: '$userData._id', name: '$userData.name', email: '$userData.email', phone: '$userData.phone', createdAt: '$userData.createdAt', isActive: '$userData.isActive', isVerified: '$userData.isVerified' }
           }}
         ],
@@ -206,6 +209,27 @@ router.get('/vendors', authorizeRole(['admin']), async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// NEW: Get full details for a specific vendor
+router.get('/vendors/:id/details', authorizeRole(['admin']), async (req, res) => {
+  try {
+    const vendor = await Vendor.findById(req.params.id)
+      .populate('user', '-password') // Populate linked user data, exclude password
+      .populate('services') // Populate all services offered by this vendor
+      .populate('verifiedBy', 'name email'); // Populate admin who verified
+
+    if (!vendor) {
+      return res.status(404).json({ error: 'Vendor not found' });
+    }
+
+    res.json(vendor);
+  } catch (error) {
+    console.error('Error fetching vendor details for admin:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
 
 // ===============================
 // Update vendor verification status
@@ -239,9 +263,9 @@ router.patch('/vendors/:id/verify', authorizeRole(['admin']), async (req, res) =
     }
 
     // 4. Synchronize the linked User account status
-    const isVerifiedForUser = verificationStatus === 'verified';
-    // Deactivate user if vendor is rejected.
-    const isActiveForUser = verificationStatus !== 'rejected';
+    const isVerifiedForUser = verificationStatus === 'verified'; // User's 'isVerified' status reflects vendor verification
+    const isActiveForUser = true; // Keep user account active even if vendor verification is rejected.
+                                  // Deactivation should be a separate admin action.
 
     const updatedUser = await User.findByIdAndUpdate(
       vendor.user,
@@ -262,22 +286,39 @@ router.patch('/vendors/:id/verify', authorizeRole(['admin']), async (req, res) =
     await vendor.save();
     vendor.user = updatedUser; // Attach for the response
     
+    const { io } = await import('../index.js');
+    io.emit('admin-vendor-status-updated', { vendorId: vendor._id, status: verificationStatus, adminId: req.user._id, adminName: updatedUser.name });
+
     let newServices = [];
     // If vendor is newly verified, create default services and notify clients
     if (verificationStatus === 'verified') {
       const existingServices = await Service.find({ vendor: vendor._id });
       
       if (existingServices.length === 0 && vendor.serviceCategories?.length > 0) {
+        // Fetch the vendor's user profile to get their location coordinates.
+        // We already have updatedUser from above, which is the vendor's user document.
+        const vendorUser = updatedUser;
+
+        let serviceLocation = null;
+        if (vendorUser.address && Array.isArray(vendorUser.address.coordinates) && vendorUser.address.coordinates.length === 2) {
+          serviceLocation = {
+            type: 'Point',
+            coordinates: vendorUser.address.coordinates // [longitude, latitude]
+          };
+        }
+
         const defaultServices = vendor.serviceCategories.map(cat => ({
           title: `${cat.charAt(0).toUpperCase() + cat.slice(1)} Service`,
           description: `Professional ${cat.replace('-', ' ')} service by ${vendor.businessName}`,
           category: cat,
           pricing: { type: 'fixed', amount: 500, unit: 'per job' },
           images: DEFAULT_IMAGE,
+          ...(serviceLocation && { location: serviceLocation }), // Conditionally add location
           vendor: vendor._id,
           isActive: true,
         }));
 
+        // Use insertMany for efficiency
         const insertedServices = await Service.insertMany(defaultServices);
         vendor.services = insertedServices.map(s => s._id);
         await vendor.save();
@@ -301,7 +342,6 @@ router.patch('/vendors/:id/verify', authorizeRole(['admin']), async (req, res) =
               select: 'name ratings'
             }
           });
-        const { io } = await import('../index.js');
         io.emit('serviceUpdated', { vendorId: vendor._id, services: populatedServices });
       }
     }
@@ -317,6 +357,36 @@ router.patch('/vendors/:id/verify', authorizeRole(['admin']), async (req, res) =
     res.status(500).json({ error: error.message });
   }
 });
+
+// ===============================
+// Get All Category Suggestions
+// ===============================
+router.get('/suggestions/categories', authorizeRole(['admin']), async (req, res) => {
+  try {
+    // Find all vendors who have made a suggestion that isn't empty
+    const vendorsWithSuggestions = await Vendor.find({
+      suggestedCategory: { $exists: true, $ne: '' }
+    })
+    .populate('user', 'name email')
+    .select('businessName suggestedCategory user');
+
+    // We can also aggregate to get counts of each suggestion
+    const suggestionCounts = await Vendor.aggregate([
+      { $match: { suggestedCategory: { $exists: true, $ne: '' } } },
+      { $group: { _id: '$suggestedCategory', count: { $sum: 1 } } },
+      { $project: { suggestion: '$_id', count: 1, _id: 0 } },
+      { $sort: { count: -1 } }
+    ]);
+
+    res.json({
+      vendors: vendorsWithSuggestions,
+      summary: suggestionCounts
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ===============================
 // Get all bookings (Unchanged)
 // ===============================
@@ -515,6 +585,9 @@ router.patch('/disputes/:id/resolve', authorizeRole(['admin']), async (req, res)
       req.io.to(booking.vendor.user._id.toString()).emit('dispute-resolved', notificationPayload);
     }
 
+    const { io } = await import('../index.js');
+    io.emit('admin-dispute-resolved', { bookingId: booking._id, resolution: resolution, finalStatus: finalStatus, adminId: req.user._id, adminName: req.user.name });
+
     res.json(booking);
   } catch (error) {
     res.status(500).json({ error: 'Server error while resolving dispute.' });
@@ -553,6 +626,7 @@ router.get('/catalog/categories', authorizeRole(['admin']), async (req, res) => 
       { $sort: { name: 1 } }
     ]);
     res.json(categories);
+    console.log("[Admin API] Categories fetched:", categories.length, "categories.");
   } catch (error) {
     console.error('Error fetching categories with stats:', error);
     res.status(500).json({ error: error.message });
@@ -617,6 +691,9 @@ router.put('/catalog/categories/:id', authorizeRole(['admin']), async (req, res)
     if (!category) {
       return res.status(404).json({ error: 'Category not found.' });
     }
+
+    const { io } = await import('../index.js');
+    io.emit('admin-category-updated', { categoryId: category._id, name: category.name, slug: category.slug, adminId: req.user._id, adminName: req.user.name });
     res.json(category);
   } catch (error) {
     res.status(500).json({ error: 'Server error while updating category.' });
@@ -636,6 +713,9 @@ router.delete('/catalog/categories/:id', authorizeRole(['admin']), async (req, r
     }
 
     await Category.findByIdAndDelete(req.params.id);
+
+    const { io } = await import('../index.js');
+    io.emit('admin-category-deleted', { categoryId: req.params.id, categoryName: category.name, adminId: req.user._id, adminName: req.user.name });
     res.json({ message: 'Category deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -651,6 +731,9 @@ router.patch('/catalog/categories/:id/toggle', authorizeRole(['admin']), async (
     }
     // Assumes the Category model has an 'isActive' boolean field.
     category.isActive = !category.isActive;
+
+    const { io } = await import('../index.js');
+    io.emit('admin-category-toggled', { categoryId: category._id, isActive: category.isActive, adminId: req.user._id, adminName: req.user.name });
     await category.save();
     res.json(category);
   } catch (error) {
@@ -714,9 +797,168 @@ router.patch('/catalog/services/:id/toggle', authorizeRole(['admin']), async (re
     
     service.isActive = !service.isActive;
     await service.save();
+
+    const { io } = await import('../index.js');
+    io.emit('admin-service-toggled', { serviceId: service._id, isActive: service.isActive, adminId: req.user._id, adminName: req.user.name });
     res.json(service);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ===============================
+// Payment & Refund Management
+// ===============================
+router.patch('/bookings/:id/refund', authorizeRole(['admin']), async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ error: 'Booking not found' });
+    
+    if (booking.payment) {
+      booking.payment.status = 'refunded';
+    } else {
+      booking.payment = { status: 'refunded' };
+    }
+    
+    booking.timeline.push({
+      status: booking.status,
+      note: 'Admin processed manual refund to customer.',
+      timestamp: new Date()
+    });
+    
+    const { io } = await import('../index.js');
+    io.emit('admin-payment-rejected', { bookingId: booking._id, reason: reason, adminId: req.user._id, adminName: req.user.name });
+
+    await booking.save();
+    res.json(booking);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Process Vendor Payout
+router.patch('/bookings/:id/payout', authorizeRole(['admin']), async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ error: 'Booking not found' });
+    
+    if (booking.payment) {
+      booking.payment.status = 'paid_to_vendor';
+      booking.payment.payoutAt = new Date();
+    } else {
+      booking.payment = { status: 'paid_to_vendor', payoutAt: new Date() };
+    }
+    
+    booking.timeline.push({
+      status: booking.status,
+      note: 'Admin released payout to vendor.',
+      timestamp: new Date()
+    });
+    
+    const { io } = await import('../index.js');
+    io.emit('admin-payment-payout', { bookingId: booking._id, adminId: req.user._id, adminName: req.user.name });
+
+    await booking.save();
+    res.json(booking);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Reject Manual Payment Proof
+router.patch('/bookings/:id/reject-payment', authorizeRole(['admin']), async (req, res) => {
+  try {
+    const { reason } = req.body;
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) return res.status(404).json({ error: 'Booking not found' });
+    
+    booking.status = 'cancelled';
+    if (booking.payment) {
+      booking.payment.status = 'pending'; // Reset payment status so it doesn't trigger a refund requirement
+    }
+    
+    booking.timeline.push({
+      status: 'cancelled',
+      note: `Admin rejected payment proof. Reason: ${reason || 'Invalid or missing payment screenshot.'}`,
+      timestamp: new Date()
+    });
+    
+    const { io } = await import('../index.js');
+    io.emit('admin-payment-refunded', { bookingId: booking._id, adminId: req.user._id, adminName: req.user.name });
+
+    await booking.save();
+    res.json(booking);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Verify Manual Payment Proof & Dispatch
+router.patch('/bookings/:id/verify-payment', authorizeRole(['admin']), async (req, res) => {
+  try {
+    const booking = await Booking.findById(req.params.id).populate({
+      path: 'vendor',
+      populate: { path: 'user', select: '_id' }
+    });
+    
+    if (!booking) return res.status(404).json({ error: 'Booking not found' });
+    
+    // 1. Mark the payment as successfully received by the platform
+    if (booking.payment) {
+      booking.payment.status = 'paid_to_platform';
+    } else {
+      booking.payment = { status: 'paid_to_platform' };
+    }
+    
+    // 2. Update booking status intelligently
+    if (booking.status === 'awaiting-payment' || booking.status === 'pending') {
+      // Check if this was an add-on payment for an in-progress job
+      const previousMeaningfulStatus = booking.timeline
+        .slice()
+        .reverse()
+        .find(t => ['in-progress', 'confirmed', 'pending'].includes(t.status));
+
+      if (previousMeaningfulStatus && previousMeaningfulStatus.status === 'in-progress') {
+        booking.status = 'in-progress';
+        booking.timeline.push({
+          status: 'in-progress',
+          note: 'Admin verified add-on payment. Job has resumed.',
+          timestamp: new Date()
+        });
+      } else {
+        booking.status = 'confirmed';
+        booking.timeline.push({
+          status: 'confirmed',
+          note: 'Admin verified initial payment proof. Job officially confirmed.',
+          timestamp: new Date()
+        });
+      }
+    } else {
+      booking.timeline.push({
+        status: booking.status,
+        note: 'Admin verified payment proof.',
+        timestamp: new Date()
+      });
+    }
+    
+    const { io } = await import('../index.js');
+    io.emit('admin-payment-verified', { bookingId: booking._id, adminId: req.user._id, adminName: req.user.name });
+
+    await booking.save();
+
+    // 3. Notify Vendor that payment is secured and job is confirmed
+    if (booking.vendor?.user?._id) {
+      req.io.to(booking.vendor.user._id.toString()).emit('booking-status-update', {
+        bookingId: booking._id,
+        status: booking.status, // Send the actual updated status (could be 'in-progress')
+        updatedBy: 'admin'
+      });
+    }
+    
+    res.json(booking);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 export default router;

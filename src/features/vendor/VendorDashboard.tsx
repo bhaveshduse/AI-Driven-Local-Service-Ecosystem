@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   Calendar,
   IndianRupee, 
   Star, 
   CheckCircle, 
-  Plus, 
-  AlertCircle,
+  Plus,
   Briefcase,
   UserCog,
   XCircle
@@ -14,6 +14,9 @@ import {
 import { QuickActionsGrid } from './components/QuickActionsGrid';
 import { RecentBookingsTable } from './components/RecentBookingsTable';
 import { RecentReviewsList } from './components/RecentReviewsList';
+import { VerificationStatus } from './VerificationStatus';
+import { DocumentUploadForm } from './DocumentUploadForm';
+import apiClient from '../../services/apiClient';
 
 interface VendorStats {
   activeBookings: number;
@@ -46,6 +49,11 @@ interface RecentReview {
     score: number;
     review: string;
   };
+}
+
+interface VendorInfo {
+  verificationStatus: 'not-submitted' | 'pending' | 'verified' | 'rejected';
+  adminNotes?: string;
 }
 
 interface StatCardProps {
@@ -101,34 +109,32 @@ export const VendorDashboard = () => {
   const [stats, setStats] = useState<VendorStats | null>(null);
   const [recentBookings, setRecentBookings] = useState<RecentBooking[]>([]);
   const [recentReviews, setRecentReviews] = useState<RecentReview[]>([]);
+  const [vendorInfo, setVendorInfo] = useState<VendorInfo | null>(null);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchDashboardData = async () => {
-      if (!token) {
-        setIsLoading(false);
-        return;
-      }
-      try {
-        const response = await fetch('/api/vendors/dashboard-stats', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        if (!response.ok) throw new Error('Failed to fetch dashboard data');
-        const data = await response.json();
-        setStats(data.stats);
-        setRecentBookings(data.recentBookings || []);
-        setRecentReviews(data.recentReviews || []); // Safely set to empty array if undefined
-      } catch (err: any) {
-        setError('We couldn\'t load your dashboard data. Please try refreshing the page.');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-    fetchDashboardData();
+  const fetchDashboardData = useCallback(async () => {
+    if (!token) {
+      setIsLoading(false);
+      return;
+    }
+    try {
+      const { data } = await apiClient.get('/vendors/dashboard-stats');
+      setStats(data.stats);
+      setRecentBookings(data.recentBookings || []);
+      setRecentReviews(data.recentReviews || []);
+      setVendorInfo(data.vendor);
+    } catch (err: any) {
+      setError('We couldn\'t load your dashboard data. Please try refreshing the page.');
+    } finally {
+      setIsLoading(false);
+    }
   }, [token]);
+
+  useEffect(() => {
+    fetchDashboardData();
+  }, [fetchDashboardData]);
 
   if (isLoading) {
     return (
@@ -150,26 +156,58 @@ export const VendorDashboard = () => {
     );
   }
 
+  if (!vendorInfo) {
+    // This is a fallback. If the main stats endpoint fails to return vendor info,
+    // it's highly likely the vendor profile is incomplete or not yet verified.
+    // We guide them to the profile page as a first step.
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="text-center bg-white p-8 rounded-xl shadow-lg max-w-md w-full">
+          <UserCog className="h-12 w-12 text-blue-500 mx-auto mb-4" />
+          <h2 className="text-xl font-semibold text-gray-800 mb-2">
+            Complete Your Profile
+          </h2>
+          <p className="text-gray-600 mb-6">
+            It looks like your vendor profile isn't fully set up. Please
+            complete your business information to access the dashboard.
+          </p>
+          <Link
+            to="/vendor/profile"
+            className="inline-block px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Go to Profile
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // If vendor is NOT verified, show a restricted page guiding them to verification.
+  if (vendorInfo.verificationStatus !== 'verified') {
+    return (
+      <div className="min-h-screen bg-gray-50 py-8">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-gray-800 mb-2">
+              Welcome, {user?.name}!
+            </h1>
+            <p className="text-gray-600">
+              Your account is almost ready. Please complete your verification to access the full dashboard.
+            </p>
+          </div>
+          <VerificationStatus vendor={vendorInfo} onUploadClick={() => setIsUploadModalOpen(true)} />
+          {isUploadModalOpen && (
+            <DocumentUploadForm onClose={() => setIsUploadModalOpen(false)} onSuccess={() => { setIsUploadModalOpen(false); fetchDashboardData(); }} />
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // If vendor IS verified, show the full dashboard.
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Verification Status Banner */}
-        {user?.role === 'vendor' && !user.isVerified && (
-          <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-8 rounded-r-lg shadow-md">
-            <div className="flex">
-              <div className="flex-shrink-0">
-                <AlertCircle className="h-5 w-5 text-yellow-500" />
-              </div>
-              <div className="ml-3">
-                <p className="text-sm text-yellow-800">
-                  Your account is <span className="font-bold">pending verification</span>. 
-                  You will not be able to create services and your profile will not be visible to customers until an admin approves your account.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Welcome Section */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-800 mb-2">

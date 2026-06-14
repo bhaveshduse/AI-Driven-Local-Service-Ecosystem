@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 // Import necessary icons
-import { Users, UserCheck, Calendar, IndianRupee, TrendingUp, Activity, RefreshCw, Layers, AlertCircle, AlertTriangle, Star } from 'lucide-react';
+import { Users, UserCheck, Calendar, IndianRupee, TrendingUp, Activity, RefreshCw, Layers, AlertCircle, AlertTriangle, Star, CheckCircle, Receipt } from 'lucide-react';
 // Import routing hooks for navigation actions
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -75,6 +75,27 @@ export const AdminDashboard: React.FC = () => {
     const [isLoading, setIsLoading] = useState<boolean>(true);
     const [isRedirecting, setIsRedirecting] = useState<boolean>(false); // New state for managing redirect
     const [error, setError] = useState<string | null>(null);
+    const [pendingVerifications, setPendingVerifications] = useState<any[]>([]);
+
+    // --- Fetch Pending Escrow Verifications ---
+    const fetchPendingVerifications = useCallback(async () => {
+        if (!token) return;
+        try {
+            const res = await fetch('/api/bookings?view=pending', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setPendingVerifications(data);
+            }
+        } catch (err) {
+            console.error("Failed to fetch pending verifications", err);
+        }
+    }, [token]);
+
+    useEffect(() => {
+        fetchPendingVerifications();
+    }, [fetchPendingVerifications]);
 
     // --- Data Fetching Function ---
     const fetchAnalytics = useCallback(async () => {
@@ -330,6 +351,25 @@ export const AdminDashboard: React.FC = () => {
                     ))}
                 </div>
 
+            {/* Payment Proof Notification Banner */}
+            {pendingVerifications.length > 0 && (
+                <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-8 rounded-r-lg shadow-sm flex items-center justify-between">
+                    <div className="flex items-center">
+                        <AlertCircle className="h-6 w-6 text-yellow-500 mr-3" />
+                        <div>
+                            <h3 className="text-lg font-medium text-yellow-800">Payment Proof Verifications</h3>
+                            <p className="text-yellow-700">You have {pendingVerifications.length} pending manual payment verification{pendingVerifications.length > 1 ? 's' : ''} requiring attention.</p>
+                        </div>
+                    </div>
+                    <button 
+                        onClick={() => navigate('/admin/payments')}
+                        className="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white font-medium rounded-lg transition-colors shadow-sm"
+                    >
+                        Review Payments
+                    </button>
+                </div>
+            )}
+
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                     {/* Platform Overview & Quick Actions */}
                     <div className="lg:col-span-2 space-y-8">
@@ -441,6 +481,22 @@ export const AdminDashboard: React.FC = () => {
                                         </div>
                                     </div>
                                     <span className="text-cyan-600">→</span>
+                                </button>
+
+                                <button 
+                                    onClick={() => navigate('/admin/payments')}
+                                    className="flex items-center justify-between p-4 border-2 border-gray-200 rounded-lg hover:border-yellow-300 hover:bg-yellow-50 transition-all"
+                                >
+                                    <div className="flex items-center space-x-3">
+                                        <div className="bg-yellow-100 p-2 rounded-full">
+                                            <Receipt className="h-5 w-5 text-yellow-600" />
+                                        </div>
+                                        <div className="text-left">
+                                            <p className="font-medium text-gray-800">Payment Proofs</p>
+                                            <p className="text-sm text-gray-500">Verify manual payments</p>
+                                        </div>
+                                    </div>
+                                    <span className="text-yellow-600">→</span>
                                 </button>
 
                                 <button 
