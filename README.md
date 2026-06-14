@@ -7,8 +7,6 @@
 
 **Swayam** is a production-ready, three-sided marketplace (Customer, Vendor, Admin) built on the MERN stack. Designed to bridge the gap between local service providers and community needs, the platform leverages advanced AI zero-shot classification to map user requests to services seamlessly. It features real-time geospatial search, secure manual escrow, and robust administrative governance.
 
-[Explore Documentation](#) · [Report Bug](https://github.com/Foxydevp/AI-Driven-Local-Service-Ecosystem-/issues) · [Request Feature](https://github.com/Foxydevp/AI-Driven-Local-Service-Ecosystem-/issues)
-
 ---
 
 ## 🚀 Technical Highlights & Key Features
