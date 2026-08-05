@@ -7,23 +7,19 @@ import Category from '../models/Category.js';
 import { authenticateToken, authorizeRole } from '../middleware/auth.js';
 import { geocodeAddress } from '../utils/geocoder.js'; // ✨ Import the reusable geocoder
 import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
+import { uploadBuffer, deleteAssetByStored, signPrivateAsset, SWAYAM_VENDORS, SWAYAM_IDENTITY } from '../utils/cloudinary.js';
 
 const router = express.Router();
 
-// Configure Multer for file uploads
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadDir = 'uploads/';
-    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    cb(null, 'vendor-' + Date.now() + path.extname(file.originalname));
+// Configure Multer for file uploads (in-memory; persisted to Cloudinary)
+const fileFilter = (req, file, cb) => {
+  if (file.mimetype.startsWith('image')) {
+    cb(null, true);
+  } else {
+    cb(new Error('Not an image! Please upload only images.'), false);
   }
-});
-const upload = multer({ storage: storage });
+};
+const upload = multer({ storage: multer.memoryStorage(), fileFilter, limits: { fileSize: 1024 * 1024 * 5 } });
 
 // Default image for services if a category-specific one isn't found
 const PLACEHOLDER_IMAGE_URL = 'https://placehold.co/600x400?text=Service+Image';
@@ -65,6 +61,11 @@ router.get(
         .populate('services');
 
       if (!vendor) return res.status(404).json({ error: 'Vendor profile not found.' });
+
+      if (vendor.documents && vendor.documents.identityProof) {
+        vendor.documents.identityProof = signPrivateAsset(vendor.documents.identityProof);
+      }
+
       res.json(vendor);
     } catch (err) {
       res.status(500).json({ error: 'Internal server error' });
@@ -111,7 +112,12 @@ router.put(
       // --- 1. Update Linked User Document ---
       const userUpdateData = {};
       if (req.files && req.files['profilePhoto']) {
-        userUpdateData.avatar = req.files['profilePhoto'][0].path.replace(/\\/g, '/');
+        const existingUser = await User.findById(req.user._id).select('avatar');
+        const { stored } = await uploadBuffer(req.files['profilePhoto'][0].buffer, { folder: SWAYAM_VENDORS });
+        userUpdateData.avatar = stored;
+        if (existingUser && existingUser.avatar) {
+          await deleteAssetByStored(existingUser.avatar).catch(() => {});
+        }
       }
       
       // The user's primary city is now a separate field.
@@ -196,7 +202,16 @@ router.put(
 
       // --- 3. Handle Verification Document Upload and Status Change ---
       if (req.files && req.files['identityProof']) {
-        vendorUpdateData['documents.identityProof'] = req.files['identityProof'][0].path.replace(/\\/g, '/');
+        const { stored } = await uploadBuffer(req.files['identityProof'][0].buffer, {
+          folder: SWAYAM_IDENTITY,
+          isPrivate: true,
+        });
+        vendorUpdateData['documents.identityProof'] = stored;
+
+        // Remove the previously uploaded proof from Cloudinary, if any.
+        if (vendorToUpdate.documents && vendorToUpdate.documents.identityProof) {
+          await deleteAssetByStored(vendorToUpdate.documents.identityProof).catch(() => {});
+        }
         
         // If vendor is submitting/re-submitting documents, move them to 'pending' status.
         // This allows re-submission if they were previously 'rejected'.

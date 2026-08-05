@@ -6,21 +6,17 @@ import User from '../models/User.js';
 import { authenticateToken, authorizeRole } from '../middleware/auth.js'; // Ensure both are imported
 import sendEmail from '../utils/sendEmail.js';
 import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
+import { uploadBuffer, deleteAssetByStored, signPrivateAsset, SWAYAM_PAYMENTS } from '../utils/cloudinary.js';
 
-// Configure Multer for payment screenshots
-const paymentStorage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadDir = 'uploads/payments/';
-    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    cb(null, 'payment-' + Date.now() + path.extname(file.originalname));
+// Configure Multer for payment screenshots (in-memory; persisted to Cloudinary)
+const fileFilter = (req, file, cb) => {
+  if (file.mimetype.startsWith('image')) {
+    cb(null, true);
+  } else {
+    cb(new Error('Not an image! Please upload only images.'), false);
   }
-});
-const uploadPayment = multer({ storage: paymentStorage });
+};
+const uploadPayment = multer({ storage: multer.memoryStorage(), fileFilter, limits: { fileSize: 1024 * 1024 * 5 } });
 
 const router = express.Router();
 
@@ -301,7 +297,7 @@ router.post('/request', uploadPayment.single('screenshot'), async (req, res) => 
       return res.status(400).json({ error: 'Payment screenshot is required for manual escrow.' });
     }
 
-    const screenshotPath = req.file.path.replace(/\\/g, '/');
+    const { stored } = await uploadBuffer(req.file.buffer, { folder: SWAYAM_PAYMENTS, isPrivate: true });
 
     const booking = new Booking({
       customer: _id,
@@ -314,7 +310,7 @@ router.post('/request', uploadPayment.single('screenshot'), async (req, res) => 
       status: 'pending', // Will stay pending until admin verifies the screenshot
       payment: { 
         status: 'verification-pending', 
-        screenshot: screenshotPath, // Save the screenshot path to DB
+        screenshot: stored, // Save the Cloudinary public id to DB
         paidAt: new Date() 
       },
     });
@@ -353,8 +349,14 @@ router.post('/:id/payment-proof', uploadPayment.single('screenshot'), async (req
 
     if (!req.file) return res.status(400).json({ error: 'Screenshot is required.' });
 
+    const { stored } = await uploadBuffer(req.file.buffer, { folder: SWAYAM_PAYMENTS, isPrivate: true });
+
+    if (booking.payment && booking.payment.screenshot) {
+      await deleteAssetByStored(booking.payment.screenshot).catch(() => {});
+    }
+
     booking.payment.status = 'verification-pending';
-    booking.payment.screenshot = req.file.path.replace(/\\/g, '/');
+    booking.payment.screenshot = stored;
     booking.payment.paidAt = new Date();
 
     booking.timeline.push({ status: booking.status, note: 'Customer uploaded payment proof. Pending Admin verification.' });
@@ -460,6 +462,10 @@ router.get('/', async (req, res) => {
         if (bookingObject.customer) delete bookingObject.customer.phone;
         if (bookingObject.vendor?.user) delete bookingObject.vendor.user.phone;
       }
+
+      if (bookingObject.payment && bookingObject.payment.screenshot) {
+        bookingObject.payment.screenshot = signPrivateAsset(bookingObject.payment.screenshot);
+      }
       return bookingObject;
     });
 
@@ -516,6 +522,11 @@ router.get('/:id', async (req, res) => {
     // If the user is a CUSTOMER, hide the VENDOR's phone unless appropriate
     if (isCustomer && !canViewContactInfo) {
       if (bookingObject.vendor?.user) delete bookingObject.vendor.user.phone;
+    }
+
+    // Sign the private payment screenshot URL so only authorized parties can view it
+    if (bookingObject.payment && bookingObject.payment.screenshot) {
+      bookingObject.payment.screenshot = signPrivateAsset(bookingObject.payment.screenshot);
     }
 
     // Admins can see everything, so no fields are removed for them.

@@ -229,7 +229,7 @@ export const PaymentVerifications: React.FC = () => {
                                             <td className="px-6 py-4 whitespace-nowrap">
                                                 {booking.payment?.screenshot ? (
                                                     <button 
-                                                        onClick={() => setSelectedScreenshot(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/${booking.payment.screenshot}`)}
+                                                        onClick={() => setSelectedScreenshot(booking.payment.screenshot)}
                                                         className="flex items-center text-sm text-blue-600 hover:text-blue-800 font-medium"
                                                     >
                                                         <ImageIcon className="w-4 h-4 mr-1" /> View Image

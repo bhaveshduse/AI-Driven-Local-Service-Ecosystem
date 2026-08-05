@@ -100,8 +100,7 @@ export const VendorDetailAdminView: React.FC = () => {
         fetchVendorDetails();
     }, [fetchVendorDetails]);
 
-    const handleViewDocument = (path: string) => {
-        const url = `/${path.replace(/\\/g, '/')}`;
+    const handleViewDocument = (url: string) => {
         window.open(url, '_blank');
         toast.success('Document opened in new tab.');
     };

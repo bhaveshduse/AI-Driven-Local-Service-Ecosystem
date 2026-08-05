@@ -8,6 +8,7 @@ import Category from '../models/Category.js';
 import Booking from '../models/Booking.js';
 import { authorizeRole } from '../middleware/auth.js';
 import multer from 'multer';
+import { signPrivateAsset } from '../utils/cloudinary.js';
 
 const router = express.Router();
 
@@ -197,7 +198,12 @@ router.get('/vendors', authorizeRole(['admin']), async (req, res) => {
     pipeline.push(facet);
 
     const result = await Vendor.aggregate(pipeline);
-    const vendors = result[0].vendors;
+    const vendors = result[0].vendors.map(vendor => {
+      if (vendor.documents && vendor.documents.identityProof) {
+        vendor.documents.identityProof = signPrivateAsset(vendor.documents.identityProof);
+      }
+      return vendor;
+    });
     const total = result[0].total[0] ? result[0].total[0].count : 0;
 
     res.json({
@@ -220,6 +226,10 @@ router.get('/vendors/:id/details', authorizeRole(['admin']), async (req, res) =>
 
     if (!vendor) {
       return res.status(404).json({ error: 'Vendor not found' });
+    }
+
+    if (vendor.documents && vendor.documents.identityProof) {
+      vendor.documents.identityProof = signPrivateAsset(vendor.documents.identityProof);
     }
 
     res.json(vendor);

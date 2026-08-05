@@ -171,10 +171,7 @@ const VendorManagement: React.FC = () => {
         }
     };
 
-    const handleViewDocument = (path: string) => {
-        // Assuming your server serves static files from /uploads
-        // You might need to add app.use('/uploads', express.static('uploads')) in your server/index.js
-        const url = `/${path.replace(/\\/g, '/')}`;
+    const handleViewDocument = (url: string) => {
         window.open(url, '_blank');
     };
 

@@ -1,30 +1,12 @@
 import express from 'express';
 import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
 import User from '../models/User.js';
 import bcrypt from 'bcryptjs';
+import { uploadBuffer, deleteAssetByStored, SWAYAM_AVATARS } from '../utils/cloudinary.js';
 
 const router = express.Router();
 
-// --- Multer Configuration for Image Upload ---
-const uploadDir = path.join(process.cwd(), 'uploads', 'avatars');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    // Create a unique filename to prevent overwrites: user-[userId]-[timestamp].[extension]
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const extension = path.extname(file.originalname);
-    cb(null, `user-${req.user._id}-${uniqueSuffix}${extension}`);
-  },
-});
-
+// --- Multer Configuration for Image Upload (in-memory; persisted to Cloudinary) ---
 const fileFilter = (req, file, cb) => {
   // Accept only images
   if (file.mimetype.startsWith('image')) {
@@ -34,7 +16,7 @@ const fileFilter = (req, file, cb) => {
   }
 };
 
-const upload = multer({ storage, fileFilter, limits: { fileSize: 1024 * 1024 * 5 } }); // 5MB limit
+const upload = multer({ storage: multer.memoryStorage(), fileFilter, limits: { fileSize: 1024 * 1024 * 5 } }); // 5MB limit
 
 // Get current user profile
 router.get('/profile', async (req, res) => {
@@ -78,11 +60,19 @@ router.put('/profile/avatar', upload.single('avatar'), async (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: 'Please upload a file.' });
     }
-    const avatarPath = `uploads/avatars/${req.file.filename}`;
-    const user = await User.findByIdAndUpdate(req.user._id, { avatar: avatarPath }, { new: true }).select('-password');
+    const user = await User.findById(req.user._id).select('-password');
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
+
+    const { stored } = await uploadBuffer(req.file.buffer, { folder: SWAYAM_AVATARS });
+
+    if (user.avatar) {
+      await deleteAssetByStored(user.avatar).catch(() => {});
+    }
+
+    user.avatar = stored;
+    await user.save();
     res.json(user);
   } catch (error) {
     res.status(400).json({ error: 'Invalid file upload. Please upload a valid image.' });

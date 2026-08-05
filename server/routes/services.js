@@ -7,21 +7,17 @@ import User from '../models/User.js';
 import Category from '../models/Category.js';
 import { authenticateToken, authorizeRole } from '../middleware/auth.js';
 import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
+import { uploadBuffer, deleteAssetByStored, SWAYAM_SERVICES } from '../utils/cloudinary.js';
 
-// Configure Multer for service images
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadDir = 'uploads/';
-    if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    cb(null, 'service-' + Date.now() + path.extname(file.originalname));
+// Configure Multer for service images (in-memory; persisted to Cloudinary)
+const fileFilter = (req, file, cb) => {
+  if (file.mimetype.startsWith('image')) {
+    cb(null, true);
+  } else {
+    cb(new Error('Not an image! Please upload only images.'), false);
   }
-});
-const upload = multer({ storage: storage });
+};
+const upload = multer({ storage: multer.memoryStorage(), fileFilter, limits: { fileSize: 1024 * 1024 * 5 } });
 
 const router = express.Router();
 
@@ -372,8 +368,13 @@ router.post('/', authenticateToken, authorizeRole(['vendor']), upload.array('ima
       }
     };
 
-    // Handle images
-    const imagePaths = req.files ? req.files.map(file => file.path.replace(/\\/g, '/')) : [];
+    // Upload images to Cloudinary
+    let images = [];
+    if (req.files && req.files.length) {
+      images = await Promise.all(
+        req.files.map(file => uploadBuffer(file.buffer, { folder: SWAYAM_SERVICES }).then(r => r.stored))
+      );
+    }
 
     const serviceData = {
       title: req.body.title,
@@ -385,7 +386,7 @@ router.post('/', authenticateToken, authorizeRole(['vendor']), upload.array('ima
       excluded: safeParseArray(req.body.excluded),
       requirements: safeParseArray(req.body.requirements),
       vendor: vendor._id,
-      images: imagePaths,
+      images,
     };
 
     // Conditionally add the location field to prevent Mongo geo index errors.
@@ -475,27 +476,30 @@ router.put('/:id', authenticateToken, authorizeRole(['vendor']), upload.array('i
     };
 
     // --- IMAGE HANDLING ---
-    // Get the paths of any newly uploaded files.
-    const newImagePaths = req.files ? req.files.map(f => f.path.replace(/\\/g, '/')) : [];
+    // Upload any newly uploaded files to Cloudinary.
+    let newImages = [];
+    if (req.files && req.files.length) {
+      newImages = await Promise.all(
+        req.files.map(f => uploadBuffer(f.buffer, { folder: SWAYAM_SERVICES }).then(r => r.stored))
+      );
+    }
 
     // The final array of images is the combination of kept existing images and new uploads.
-    updateData.images = [...existingImagesToKeep, ...newImagePaths];
+    updateData.images = [...existingImagesToKeep, ...newImages];
 
     // --- ORPHANED IMAGE DELETION ---
     // Compare the old image array with the new one to find images that were removed.
     const oldImages = serviceToUpdate.images || [];
-    const newImages = updateData.images;
-    const imagesToDelete = oldImages.filter(oldImg => !newImages.includes(oldImg));
+    const newImagesFinal = updateData.images;
+    const imagesToDelete = oldImages.filter(oldImg => !newImagesFinal.includes(oldImg));
 
-    imagesToDelete.forEach(imagePath => {
-      // Use fs.unlink to delete the file from the server.
-      // Add a try-catch to prevent a failed deletion from crashing the request.
+    for (const imagePath of imagesToDelete) {
       try {
-        fs.unlinkSync(path.join(process.cwd(), imagePath));
+        await deleteAssetByStored(imagePath);
       } catch (err) {
         console.error(`Failed to delete orphaned image: ${imagePath}`, err);
       }
-    });
+    }
 
     const service = await Service.findOneAndUpdate(
       { _id: req.params.id, vendor: vendor._id }, // Ensure vendor owns this service
@@ -541,6 +545,15 @@ router.delete('/:id', authenticateToken, authorizeRole(['vendor']), async (req, 
     const service = await Service.findOneAndDelete({ _id: req.params.id, vendor: vendor._id });
 
     if (!service) return res.status(404).json({ error: 'Service not found or you do not have permission to delete it.' });
+
+    // Remove associated Cloudinary images
+    for (const imageUrl of (service.images || [])) {
+      try {
+        await deleteAssetByStored(imageUrl);
+      } catch (err) {
+        console.error(`Failed to delete image: ${imageUrl}`, err);
+      }
+    }
 
     // Remove the service from the vendor's services array
     await Vendor.updateOne({ _id: vendor._id }, { $pull: { services: service._id } });
