@@ -33,7 +33,18 @@ const vendorSchema = new mongoose.Schema({
       default: 10 // kilometers
     },
     cities: [String]
-    // 🔮 optional future: add { lat: Number, lng: Number } for geo queries
+  },
+  // Current working location for mobile vendors. Falls back to address.coordinates when null.
+  workingLocation: {
+    type: {
+      type: String,
+      enum: ['Point'],
+      default: 'Point'
+    },
+    coordinates: {
+      type: [Number], // [lng, lat]
+      default: undefined
+    }
   },
   availability: {
     schedule: [{
@@ -98,7 +109,7 @@ const vendorSchema = new mongoose.Schema({
   adminNotes: { // Notes from admin regarding verification status (e.g., rejection reason)
     type: String,
     default: ''
-  }
+  },
 }, {
     timestamps: true
 });

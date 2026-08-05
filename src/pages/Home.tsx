@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Search, MapPin, Star, Shield, Clock, Users, Sparkles, LocateFixed, Loader2 } from 'lucide-react';
+import { Search, MapPin, Star, Shield, Clock, Sparkles, LocateFixed, Loader2 } from 'lucide-react';
 import AIClassifier from '../features/services/AIClassifier';
 import { useAuth } from '../contexts/AuthContext';
 import { toast } from 'react-hot-toast';

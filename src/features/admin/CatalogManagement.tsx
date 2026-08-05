@@ -1,12 +1,12 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { 
   Edit, Trash2, PlusCircle, 
-  Search, Loader2, List, MapPin, Tag
+  Search, Loader2, MapPin, Tag
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { CategoryModal } from '../../components/admin/CategoryModal';
 import { useCatalog } from '../../hooks/useCatalog';
-import { Category, Service } from '../../services/adminCatalogService';
+import { Category } from '../../services/adminCatalogService';
 import { useAuth } from '../../contexts/AuthContext';
 
 export const CatalogManagement = () => {
@@ -28,11 +28,8 @@ export const CatalogManagement = () => {
     services, 
     isLoadingCategories, 
     isLoadingServices,
-    categoryError,
-    serviceError,
     saveCategory, 
     deleteCategory, 
-    toggleServiceStatus,
     deleteService 
   } = useCatalog(activeTab);
 

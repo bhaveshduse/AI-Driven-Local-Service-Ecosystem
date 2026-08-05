@@ -20,5 +20,6 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "server/emailService.js", "src/components/Navbar.tsx", "server/routes/catalog.js", "src/utils/helpers.ts", "src/components/admin/RevenueByCategoryChart.tsx"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "node_modules", "dist"]
 }

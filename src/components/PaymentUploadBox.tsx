@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { CheckCircle, Loader2, CreditCard, ArrowLeft, Clock, RefreshCw } from 'lucide-react';
+import { CheckCircle, Loader2, CreditCard, ArrowLeft, Clock, RefreshCw, IndianRupee } from 'lucide-react';
 import { uploadPaymentProof } from '../services/apiClient';
+import { createRazorpayOrder, verifyRazorpayPayment, openRazorpayCheckout } from '../services/razorpay';
 import qrCode from '../assets/qr-code.png';
 
 interface AddOn {
   _id: string;
   description: string;
   amount: number;
-  status: 'pending' | 'approved' | 'rejected' | 'cancelled'; // Added 'cancelled'
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
   createdAt: string;
-  paid?: boolean; // Assuming 'paid' flag might be added later to add-ons
+  paid?: boolean;
 }
 
 interface Booking {
@@ -35,9 +36,16 @@ interface Booking {
   };
   payment?: {
     status: string;
+    method?: string;
+    razorpayOrderId?: string;
     [key: string]: unknown;
   };
-  // Add other booking properties as needed by this component
+  customer?: {
+    _id: string;
+    email?: string;
+    phone?: string;
+    name?: string;
+  };
 }
 
 interface PaymentUploadBoxProps {
@@ -49,16 +57,65 @@ const PaymentUploadBox: React.FC<PaymentUploadBoxProps> = ({ booking, onStatusUp
   const navigate = useNavigate();
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState(false);
+  const [razorpayLoading, setRazorpayLoading] = useState(false);
   const [showPaymentDetails, setShowPaymentDetails] = useState(false);
   const [timeLeft, setTimeLeft] = useState<string | null>(null);
   const [isExpired, setIsExpired] = useState(false);
   const [isAddOnPayment, setIsAddOnPayment] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState(0); // Initialize with 0, will be set in useEffect
+  
+  const isRazorpay = booking.payment?.method === 'razorpay' || booking.payment?.razorpayOrderId;
 
-  // Only render this component if the booking is explicitly awaiting-payment or accepted
-  if (booking.status !== 'awaiting-payment' && booking.status !== 'accepted') {
-    return null;
-  }
+  const loadRazorpayScript = (): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if ((window as any).Razorpay) { resolve(); return; }
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Failed to load Razorpay SDK.'));
+      document.body.appendChild(script);
+    });
+  };
+
+  const handleRazorpayPayment = async () => {
+    setRazorpayLoading(true);
+    try {
+      await loadRazorpayScript();
+      const orderData = await createRazorpayOrder(booking._id);
+      openRazorpayCheckout({
+        keyId: orderData.keyId,
+        orderId: orderData.orderId,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: 'Swayam',
+        description: `Payment for ${booking.service.title}`,
+        prefill: {
+          name: booking.customer?.name || '',
+          email: booking.customer?.email || '',
+          contact: booking.customer?.phone || '',
+        },
+        onSuccess: async (details) => {
+          try {
+            await verifyRazorpayPayment(booking._id, details);
+            toast.success('Payment successful! Booking confirmed.');
+            // Refresh booking data by triggering parent callback
+            onStatusUpdate({ ...booking, status: 'confirmed', payment: { ...booking.payment, status: 'paid_to_platform', method: 'razorpay' } });
+            window.location.reload();
+          } catch (err: any) {
+            toast.error(err.response?.data?.error || 'Payment verification failed. Please contact support.');
+          }
+        },
+        onError: (error) => {
+          toast.error(error.message || 'Payment was cancelled or failed.');
+        },
+      });
+    } catch (error: any) {
+      toast.error(error.response?.data?.error || error.message || 'Failed to initiate payment.');
+    } finally {
+      setRazorpayLoading(false);
+    }
+  };
 
   useEffect(() => {
     let currentPaymentAmount = 0;
@@ -126,6 +183,12 @@ const PaymentUploadBox: React.FC<PaymentUploadBoxProps> = ({ booking, onStatusUp
       setIsExpired(false);
     }
   }, [booking]); // Rerun when booking object changes
+
+  // Only render this component if the booking is explicitly awaiting-payment or accepted
+  if (booking.status !== 'awaiting-payment' && booking.status !== 'accepted') {
+    return null;
+  }
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) return alert("Please select a screenshot of your payment.");
@@ -198,10 +261,22 @@ const PaymentUploadBox: React.FC<PaymentUploadBoxProps> = ({ booking, onStatusUp
             <RefreshCw className="mr-2 h-5 w-5" />
             Re-book Service
           </button>
+        ) : isRazorpay ? (
+          <button
+            onClick={handleRazorpayPayment}
+            disabled={razorpayLoading}
+            className="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors flex items-center justify-center whitespace-nowrap disabled:opacity-50"
+          >
+            {razorpayLoading ? (
+              <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Opening Checkout...</>
+            ) : (
+              <><IndianRupee className="mr-2 h-5 w-5" /> Pay with Razorpay</>
+            )}
+          </button>
         ) : (
           <button 
             onClick={() => setShowPaymentDetails(true)}
-            className="w-full sm:w-auto px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-lg transition-colors flex items-center justify-center whitespace-nowrap"
+            className="w-full sm:w-auto px-6 py-3 bg-green-600 hover:bg-green-700 text-green-50 font-bold rounded-lg transition-colors flex items-center justify-center whitespace-nowrap"
           >
             <CreditCard className="mr-2 h-5 w-5" />
             Pay Now
@@ -243,6 +318,56 @@ const PaymentUploadBox: React.FC<PaymentUploadBoxProps> = ({ booking, onStatusUp
         <p className="text-sm text-gray-500">
           Booking ID: #{booking._id.slice(-8)} for {booking.service.title}
         </p>
+      </div>
+    );
+  }
+
+  // Show Razorpay checkout in expanded view if the user chose that method
+  if (isRazorpay) {
+    return (
+      <div className="mt-6 bg-white p-6 rounded-xl shadow-lg border border-blue-100">
+        <div className="flex justify-between items-start mb-2 flex-wrap gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-xl font-bold text-gray-800">{isAddOnPayment ? 'Pay for Approved Extras' : 'Vendor Accepted! Secure Your Booking'}</h2>
+            {timeLeft && !isExpired && (
+              <span className="text-sm bg-red-100 text-red-700 px-2.5 py-0.5 rounded-full flex items-center font-medium animate-pulse">
+                {timeLeft} left
+              </span>
+            )}
+            {isExpired && (
+              <span className="text-sm bg-red-100 text-red-700 px-2.5 py-0.5 rounded-full font-medium">
+                Time Expired
+              </span>
+            )}
+          </div>
+          <button 
+            onClick={handleGoBack}
+            className="text-gray-500 hover:text-gray-800 flex items-center text-sm font-medium transition-colors bg-gray-100 hover:bg-gray-200 px-3 py-1.5 rounded-lg"
+          >
+            <ArrowLeft className="h-4 w-4 mr-1.5" />
+            Go Back
+          </button>
+        </div>
+        <p className="text-sm text-gray-600 mb-6">
+          The vendor is ready to begin. Complete your payment online to confirm the booking instantly.
+        </p>
+        <div className="flex flex-col items-center justify-center bg-gray-50 p-8 rounded-lg border border-gray-200">
+          <div className="text-center mb-6">
+            <p className="text-sm text-gray-500">Amount to Pay</p>
+            <p className="text-3xl font-bold text-blue-700">₹{paymentAmount}</p>
+          </div>
+          <button
+            onClick={handleRazorpayPayment}
+            disabled={razorpayLoading}
+            className="w-full max-w-xs px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+          >
+            {razorpayLoading ? (
+              <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Opening Checkout...</>
+            ) : (
+              <><IndianRupee className="mr-2 h-5 w-5" /> Pay ₹{paymentAmount} via Razorpay</>
+            )}
+          </button>
+        </div>
       </div>
     );
   }

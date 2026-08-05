@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { AlertCircle, CheckCircle, Loader2, MapPin } from 'lucide-react';
@@ -8,7 +8,6 @@ import { useGeolocation } from '../../hooks/useGeolocation';
 import { createBooking, type BookingPayload } from '../../services/bookingService';
 import { getCustomers, type Customer } from '../../services/adminService';
 import apiClient from '../../services/apiClient';
-import qrCode from '../../assets/qr-code.png';
 
 interface UserProfile {
   _id: string;
@@ -40,15 +39,75 @@ export const BookService = () => {
   const [city, setCity] = useState('');
   const [zipCode, setZipCode] = useState('');
   const [coordinates, setCoordinates] = useState<{ lat: string; lon: string } | null>(null);
+  const [geocodeFailed, setGeocodeFailed] = useState(false);
+  const [geocodeLevel, setGeocodeLevel] = useState<'street' | 'city' | null>(null);
   const [notes, setNotes] = useState('');
+
+  // Payment method state
+  const [paymentMethod, setPaymentMethod] = useState<'manual' | 'razorpay'>('razorpay');
 
   // Admin-specific state
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState('');
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
   // Geolocation hook
   const { isLoading: isLocating, getLocation } = useGeolocation();
+  const [locationModal, setLocationModal] = useState<{ show: boolean; canRetry: boolean; message: string }>({ show: false, canRetry: false, message: '' });
+
+  const haversineDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  /**
+   * Computes the minimum advance notice (in minutes) required before a time slot.
+   * Uses the larger of two buffers:
+   *   1. Static radius buffer: vendor's declared service radius
+   *   2. Actual distance buffer: GPS distance from vendor base to user location
+   * Each buffer = max(30 min, distance × 2 min/km), capped at 90 min.
+   * Falls back to 60 minutes if neither is available.
+   */
+  const getMinBufferMinutes = (): number => {
+    const radius = service?.vendor?.serviceArea?.radius;
+    const radiusBuffer = radius && radius > 0
+      ? Math.max(30, Math.min(radius * 2, 90))
+      : 60;
+
+    const vendorCoords = service?.vendor?.workingLocation?.coordinates ?? service?.vendor?.user?.address?.coordinates;
+    const userCoords = coordinates;
+    let distanceBuffer = 0;
+    if (vendorCoords && vendorCoords.length === 2 && userCoords?.lat && userCoords?.lon) {
+      const distKm = haversineDistance(
+        parseFloat(userCoords.lat), parseFloat(userCoords.lon),
+        vendorCoords[1], vendorCoords[0]
+      );
+      distanceBuffer = Math.max(30, Math.min(distKm * 2, 90));
+    }
+
+    return Math.max(radiusBuffer, distanceBuffer);
+  };
+
+  // Compute estimated distance when GPS or street-level geocode is available
+  const showDistance = coordinates && (
+    geocodeLevel === 'street' || geocodeLevel === null // null = GPS, 'street' = street-level geocode
+  );
+  const estimatedDistance = (() => {
+    if (!showDistance) return null;
+    const vendorCoords = service?.vendor?.workingLocation?.coordinates ?? service?.vendor?.user?.address?.coordinates;
+    if (vendorCoords && vendorCoords.length === 2 && coordinates?.lat && coordinates?.lon) {
+      return haversineDistance(
+        parseFloat(coordinates.lat), parseFloat(coordinates.lon),
+        vendorCoords[1], vendorCoords[0]
+      );
+    }
+    return null;
+  })();
 
   // A predefined list of professional time slots for a flexible, request-based booking system.
   // The `label` is for the user, and the `value` is the 24-hour format for the backend.
@@ -78,7 +137,6 @@ export const BookService = () => {
         if (user?.role === 'customer') {
           const userProfileResponse = await apiClient.get('/auth/me');
           const profile: UserProfile = userProfileResponse.data;
-          setUserProfile(profile);
 
           // Pre-fill address if it exists on their profile
           if (profile.address?.street || profile.city) {
@@ -88,7 +146,7 @@ export const BookService = () => {
             toast.success('Address pre-filled from your profile.');
           }
         }
-      } catch (err) {
+      } catch {
         setError('Failed to load service details');
       } finally {
         setIsLoading(false);
@@ -129,25 +187,31 @@ export const BookService = () => {
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newDate = e.target.value;
     setDate(newDate);
-    
-    // If changing to today, check if selected time is already in the past (with 2-hour buffer)
+
+    // If switching to today, verify the previously selected time still satisfies the notice buffer
     if (newDate === today && time) {
-      const currentHour = new Date().getHours();
-      const slotHour = parseInt(time.split(':')[0], 10);
-      if (slotHour <= currentHour + 2) {
+      const now = new Date();
+      const [hour, minute] = time.split(':').map(Number);
+      const slotDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute);
+      const diffMin = (slotDate.getTime() - now.getTime()) / (1000 * 60);
+      if (diffMin < getMinBufferMinutes()) {
         setTime('');
       }
     }
   };
 
-  // Filter/disable time slots for today to prevent past time booking
+  // Filter/disable time slots for today based on actual minutes remaining, not just hour boundaries
   const availableTimeSlots = PREDEFINED_TIME_SLOTS.map(slot => {
     const isToday = date === today;
-    const currentHour = new Date().getHours();
-    const slotHour = parseInt(slot.value.split(':')[0], 10);
-    // Require a minimum of 2 hours advance notice for same-day bookings
-    const isPast = isToday && slotHour <= (currentHour + 2);
-    return { ...slot, disabled: isPast };
+    if (!isToday) return { ...slot, disabled: false };
+
+    const now = new Date();
+    const [hour, minute] = slot.value.split(':').map(Number);
+    const slotDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute);
+    const diffMin = (slotDate.getTime() - now.getTime()) / (1000 * 60);
+    const isDisabled = diffMin < getMinBufferMinutes();
+
+    return { ...slot, disabled: isDisabled };
   });
 
   const hasAvailableSlots = availableTimeSlots.some(slot => !slot.disabled);
@@ -158,39 +222,85 @@ export const BookService = () => {
       const { coordinates: coords, address } = await getLocation();
 
       if (address) {
-        setStreet(address.road || address.suburb || '');
-        setCity(address.city || address.town || address.village || address.county || '');
-        setZipCode(address.postcode || '');
-        
-        // Save exact GPS coordinates so we don't need to geocode later
-        setCoordinates({ lat: coords.lat.toString(), lon: coords.lon.toString() });
-        
-        toast.success(address.city ? `Location set to ${address.city}` : 'Address and coordinates filled!', { id: toastId });
+        let filled = false;
+        if (!street) { setStreet(address.road || address.suburb || ''); filled = true; }
+        if (!city) { setCity(address.city || address.town || address.village || address.county || ''); filled = true; }
+        if (!zipCode) { setZipCode(address.postcode || ''); filled = true; }
+        if (!coordinates) {
+          setCoordinates({ lat: coords.lat.toString(), lon: coords.lon.toString() });
+          setGeocodeLevel(null);
+          setGeocodeFailed(false);
+          console.log(`[GPS handleLocateMe] Stored coordinates → (${coords.lat}, ${coords.lon})`);
+          filled = true;
+        }
+        toast.success(filled ? 'Location set!' : 'GPS location refreshed.', { id: toastId });
       } else {
         throw new Error('Could not determine address from your location.');
       }
     } catch (error: any) {
-      // Adopt the more detailed error handling from Services.tsx
-      let errorMsg = "An unknown error occurred while fetching location.";
       if (error instanceof GeolocationPositionError) {
         switch (error.code) {
           case error.PERMISSION_DENIED:
-            errorMsg = "Location access denied. Please enable it in your browser settings.";
-            break;
+            toast.dismiss(toastId);
+            setLocationModal({ show: true, canRetry: true, message: "Location access is blocked. Enable location in your browser settings, then tap retry." });
+            return;
           case error.POSITION_UNAVAILABLE:
-            errorMsg = "Location information is unavailable at the moment.";
-            break;
+            toast.dismiss(toastId);
+            setLocationModal({ show: true, canRetry: true, message: "Could not detect your location. Make sure GPS/Wi-Fi is on, then tap retry." });
+            return;
           case error.TIMEOUT:
-            errorMsg = "The request to get your location timed out.";
-            break;
+            toast.error("The request timed out. Please try again.", { id: toastId });
+            return;
         }
-      } else {
-        errorMsg = error.message || 'Failed to get location.';
       }
-      toast.error(errorMsg, { id: toastId });
+      if (error.message?.includes("not supported")) {
+        toast.dismiss(toastId);
+        setLocationModal({ show: true, canRetry: false, message: "Geolocation is not supported by your browser. Please use a modern browser or enter your address manually." });
+        return;
+      }
+      toast.error(error.message || 'Failed to get location.', { id: toastId });
       console.error('Geolocation error:', error);
     }
   };
+
+  // Debounced: geocode zip to get coordinates + auto-fill city
+  const geocodeTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    setGeocodeFailed(false);
+    setGeocodeLevel(null);
+    if (coordinates) return;
+    if (!zipCode) return;
+    const cleanCity = city && !['not specified', 'none', 'n/a'].includes(city.trim().toLowerCase()) ? city : '';
+    if (geocodeTimerRef.current) clearTimeout(geocodeTimerRef.current);
+    geocodeTimerRef.current = setTimeout(async () => {
+      const q = cleanCity ? `${cleanCity}, ${zipCode}` : zipCode;
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`, {
+          headers: { 'User-Agent': 'Swayam-App/1.0' }
+        });
+        if (!res.ok) { setGeocodeFailed(true); return; }
+        const data = await res.json();
+        if (!data?.[0]?.lat || !data?.[0]?.lon) { setGeocodeFailed(true); return; }
+        const lat = data[0].lat, lon = data[0].lon;
+        console.log(`[Manual Geocode] Query "${q}" → forward: (${lat}, ${lon})`);
+        setCoordinates({ lat, lon });
+        setGeocodeLevel('city');
+        setGeocodeFailed(false);
+        if (!cleanCity) {
+          const rev = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`, {
+            headers: { 'User-Agent': 'Swayam-App/1.0' }
+          });
+          if (rev.ok) {
+            const revData = await rev.json();
+            console.log(`[Manual Geocode] Reverse → lat=${lat}, lon=${lon}, city=${revData.address?.city || revData.address?.town || 'N/A'}`);
+            const detectedCity = revData.address?.city || revData.address?.town || revData.address?.village || revData.address?.county;
+            if (detectedCity) setCity(detectedCity);
+          }
+        }
+      } catch { setGeocodeFailed(true); }
+    }, 1000);
+    return () => { if (geocodeTimerRef.current) clearTimeout(geocodeTimerRef.current); };
+  }, [city, zipCode, coordinates]);
 
   const handleAddressChange = (setter: React.Dispatch<React.SetStateAction<string>>) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setter(e.target.value);
@@ -215,7 +325,7 @@ export const BookService = () => {
       const [hour, minute] = time.split(':').map(Number);
       const scheduledDate = new Date(year, month - 1, day, hour, minute);
       const now = new Date();
-      const maxAllowedDate = new Date();
+      const maxAllowedDate = new Date(now);
       maxAllowedDate.setMonth(now.getMonth() + 3);
 
       // Frontend validation for the date.
@@ -295,8 +405,8 @@ export const BookService = () => {
         bookingPayload.customer = selectedCustomer;
       }
 
-      // Specify manual payment for Two-Step Escrow
-      bookingPayload.paymentMethod = 'manual';
+      // Set payment method
+      bookingPayload.paymentMethod = paymentMethod;
       
       await createBooking(bookingPayload);
       
@@ -434,10 +544,21 @@ export const BookService = () => {
                 </div>
               </div>
 
-              {coordinates && (
+              {geocodeFailed && !coordinates && (
+                <div className="mt-2 p-3 bg-amber-50 text-amber-800 rounded-lg text-sm flex items-center border border-amber-200">
+                  <AlertCircle className="h-4 w-4 mr-2 flex-shrink-0" />
+                  Could not verify your address. Please check and correct your location details.
+                </div>
+              )}
+              {coordinates && geocodeLevel === null && (
                 <div className="mt-2 p-3 bg-green-50 text-green-700 rounded-lg text-sm flex items-center border border-green-200">
                   <CheckCircle className="h-4 w-4 mr-2 flex-shrink-0" />
                   Precise GPS coordinates acquired. The provider will be able to navigate directly to you!
+                </div>
+              )}
+              {estimatedDistance !== null && service?.vendor && (service?.vendor?.workingLocation?.coordinates ?? service?.vendor?.user?.address?.coordinates) && (
+                <div className="mt-2 p-3 bg-blue-50 text-blue-700 rounded-lg text-sm border border-blue-200">
+                  📍 Provider is {estimatedDistance < 1 ? 'less than 1' : `~${estimatedDistance.toFixed(1)}`} km from your location
                 </div>
               )}
             </div>
@@ -452,12 +573,86 @@ export const BookService = () => {
               <span className="text-2xl font-bold text-blue-600">₹{service.pricing.amount}</span>
             </div>
 
+            <div className="bg-gray-50 p-4 rounded-lg">
+              <label className="block text-sm font-medium text-gray-700 mb-3">Payment Method</label>
+              <div className="flex gap-4">
+                <label className={`flex-1 flex items-center p-3 rounded-lg border-2 cursor-pointer transition-colors ${paymentMethod === 'razorpay' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                  <input
+                    type="radio"
+                    name="paymentMethod"
+                    value="razorpay"
+                    checked={paymentMethod === 'razorpay'}
+                    onChange={() => setPaymentMethod('razorpay')}
+                    className="sr-only"
+                  />
+                  <div>
+                    <p className="font-semibold text-gray-800">Razorpay</p>
+                    <p className="text-xs text-gray-500">Pay via UPI, Card, NetBanking</p>
+                  </div>
+                </label>
+                <label className={`flex-1 flex items-center p-3 rounded-lg border-2 cursor-pointer transition-colors ${paymentMethod === 'manual' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                  <input
+                    type="radio"
+                    name="paymentMethod"
+                    value="manual"
+                    checked={paymentMethod === 'manual'}
+                    onChange={() => setPaymentMethod('manual')}
+                    className="sr-only"
+                  />
+                  <div>
+                    <p className="font-semibold text-gray-800">Manual Escrow</p>
+                    <p className="text-xs text-gray-500">Pay via QR code + admin verification</p>
+                  </div>
+                </label>
+              </div>
+            </div>
+
             <button type="submit" disabled={isSubmitting} className="w-full bg-blue-600 text-white py-4 rounded-lg font-bold hover:bg-blue-700 transition-colors disabled:opacity-50">
               {isSubmitting ? 'Processing...' : 'Request Booking'}
             </button>
           </form>
+
+          {locationModal.show && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center" onClick={() => setLocationModal({ show: false, canRetry: false, message: '' })}>
+              <div className="bg-white rounded-xl shadow-2xl p-6 m-4 max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-start space-x-4">
+                  <div className="flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
+                    <MapPin className="h-6 w-6 text-red-600" />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-lg leading-6 font-bold text-gray-900">Enable Location</h3>
+                    <div className="mt-2">
+                      <p className="text-sm text-gray-600">{locationModal.message}</p>
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-5 flex gap-3 justify-end">
+                  <button
+                    type="button"
+                    className="inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:text-sm"
+                    onClick={() => setLocationModal({ show: false, canRetry: false, message: '' })}
+                  >
+                    Cancel
+                  </button>
+                  {locationModal.canRetry && (
+                    <button
+                      type="button"
+                      className="inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-blue-600 text-base font-medium text-white hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:text-sm"
+                      onClick={() => {
+                        setLocationModal({ show: false, canRetry: false, message: '' });
+                        setTimeout(() => handleLocateMe(), 50);
+                      }}
+                    >
+                      Try Again
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
     </div>
   );
 };

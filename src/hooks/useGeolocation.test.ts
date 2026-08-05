@@ -59,7 +59,8 @@ describe('useGeolocation', () => {
     expect(navigator.geolocation.getCurrentPosition).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch).toHaveBeenCalledWith(
-      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${mockPosition.coords.latitude}&lon=${mockPosition.coords.longitude}`
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${mockPosition.coords.latitude}&lon=${mockPosition.coords.longitude}`,
+      { headers: { 'User-Agent': 'Swayam-App/1.0' } }
     );
   });
 

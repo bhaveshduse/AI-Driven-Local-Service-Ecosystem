@@ -1,6 +1,4 @@
-import React from 'react';
 import { useForm } from 'react-hook-form';
-import { useAuth } from '../contexts/AuthContext';
 import apiClient from '../services/apiClient';
 import { toast } from 'react-hot-toast';
 import { Lock, Loader2 } from 'lucide-react';
@@ -12,7 +10,6 @@ interface ChangePasswordFormData {
 }
 
 const ChangePasswordForm = () => {
-  const { token } = useAuth();
   const {
     register,
     handleSubmit,

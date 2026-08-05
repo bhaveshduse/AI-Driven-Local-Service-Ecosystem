@@ -443,7 +443,7 @@ export const Services = () => {
   useEffect(() => {
     if (isInitialMount.current) return;
     setCurrentPage(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [
     debouncedSearch,
     debouncedCity,

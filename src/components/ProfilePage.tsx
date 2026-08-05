@@ -1,4 +1,3 @@
-import React from 'react';
 import CustomerProfileForm from '../features/customer/CustomerProfileForm';
 import ChangePasswordForm from '../components/ChangePasswordForm';
 

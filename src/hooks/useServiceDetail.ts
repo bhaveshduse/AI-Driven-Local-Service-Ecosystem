@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
 import { useAuth } from '../contexts/AuthContext';
-import { getServiceById, Service } from '../services/serviceService';
+import { getServiceById, Service, ServiceDetail } from '../services/serviceService';
 
 /**
  * Custom hook to fetch and manage the state for a single service detail.
@@ -15,7 +15,7 @@ export const useServiceDetail = (serviceId: string | undefined) => {
   const navigate = useNavigate();
   const { token, logout } = useAuth();
 
-  const [service, setService] = useState<Service | null>(null);
+  const [service, setService] = useState<ServiceDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,7 +37,7 @@ export const useServiceDetail = (serviceId: string | undefined) => {
         console.error('Error fetching service:', err);
         const errorMessage = err.response?.data?.error || err.message || 'Could not load service.';
         
-        if (err.response?.status === 401) {
+        if (err.response?.status === 401 || err.response?.status === 403) {
           toast.error("Session expired. Please log in again.");
           logout();
           navigate('/login', { state: { from: { pathname: `/services/${serviceId}` } } });

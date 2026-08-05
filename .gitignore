@@ -24,4 +24,12 @@ dist-ssr
 *.sw?
 .env
 .venv
+nul
 **/__pycache__/
+*.pyc
+
+# Runtime uploads (local filesystem; not committed)
+uploads/
+
+# TypeScript build cache
+*.tsbuildinfo

@@ -4,8 +4,6 @@ import {
   fetchServicesAPI,
   saveCategoryAPI,
   deleteCategoryAPI,
-  deleteServiceAPI,
-  toggleServiceStatusAPI,
   Category,
   Service,
 } from '../services/adminCatalogService';
@@ -98,8 +96,8 @@ export const useCatalog = (activeTab: 'categories' | 'services'): UseCatalogResu
   }, [token, getCategories]);
 
   // --- Service Actions (similar structure, omitted for brevity but should be in your actual hook) ---
-  const toggleServiceStatus = useCallback(async (serviceId: string, isActive: boolean) => { /* ... */ }, []);
-  const deleteService = useCallback(async (serviceId: string) => { /* ... */ }, []);
+  const toggleServiceStatus = useCallback(async () => { /* ... */ }, []);
+  const deleteService = useCallback(async () => { /* ... */ }, []);
 
   return {
     categories,

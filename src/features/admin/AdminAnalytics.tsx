@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import { 
   Download, Users, UserCheck, Calendar, IndianRupee, 
-  Star, MessageSquare, Loader2, TrendingUp 
+  Loader2, TrendingUp 
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { toast } from 'react-hot-toast';
@@ -71,7 +71,7 @@ export const AdminAnalytics: React.FC = () => {
       if (!response.ok) throw new Error('Failed to fetch analytics data');
       const data = await response.json();
       setAnalytics(data);
-    } catch (error) {
+    } catch {
       toast.error('Could not load analytics data.');
     } finally {
       setIsLoading(false);

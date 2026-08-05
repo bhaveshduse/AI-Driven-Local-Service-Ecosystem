@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import apiClient from '../../services/apiClient';
-import { Calendar, Clock, MapPin, Star, User, Briefcase, Edit, Save, X, AlertCircle, Phone, Mail, IndianRupee, ShieldCheck, CheckCircle } from 'lucide-react';
+import { Calendar, MapPin, User, Briefcase, X, AlertCircle, Phone, Mail, ShieldCheck } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import PaymentUploadBox from '../../components/PaymentUploadBox';
 
@@ -84,7 +84,7 @@ export const BookingDetail: React.FC = () => {
 
   const [booking, setBooking] = useState<Booking | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isEditing, setIsEditing] = useState(false);
+  const [isEditing] = useState(false);
   const [editData, setEditData] = useState({
     date: '',
     time: '',
@@ -150,30 +150,6 @@ export const BookingDetail: React.FC = () => {
     fetchOtp();
   }, [booking, user, token]);
 
-  const handleSaveChanges = async () => {
-    if (!booking) return;
-
-    const scheduledDate = new Date(`${editData.date}T${editData.time}`);
-    if (isNaN(scheduledDate.getTime())) {
-      toast.error('Invalid date or time.');
-      return;
-    }
-
-    try {
-      await apiClient.put(`/bookings/${booking._id}`, {
-        scheduledDate: scheduledDate.toISOString(),
-        address: editData.address,
-        notes: editData.notes
-      });
-
-      toast.success('Booking updated successfully!');
-      setIsEditing(false);
-      fetchBooking(); // Refetch to show updated data
-    } catch (error: any) {
-      toast.error(error.message);
-    }
-  };
-
   const handleReportSubmit = async () => {
     if (!booking || !reportReason || !reportDescription) {
         toast.error('Please provide a reason and a detailed description.');
@@ -220,20 +196,6 @@ export const BookingDetail: React.FC = () => {
       setIsUpdatingStatus(false);
     }
   };
-
-  const handleAddOnResponse = async (addOnId: string, responseStatus: 'approved' | 'rejected') => {
-    if (!booking) return;
-    const toastId = toast.loading(`Submitting your response...`);
-    try {
-      await apiClient.patch(`/bookings/${booking._id}/addons/${addOnId}`, { status: responseStatus });
-      toast.success(`Add-on ${responseStatus}.`, { id: toastId });
-      fetchBooking(); // Refresh to get the latest state
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || "Failed to respond.", { id: toastId });
-    }
-  };
-
-  const canEdit = user && booking && (user.role === 'customer' && user.id === booking.customer._id) && ['pending', 'confirmed'].includes(booking.status);
 
   if (isLoading) return <div className="p-8 text-center">Loading booking details...</div>;
   if (!booking) return <div className="p-8 text-center">Booking not found.</div>;

@@ -91,7 +91,7 @@ router.get('/analytics', authorizeRole(['admin']), async (req, res) => {
       recentReviews
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -113,7 +113,7 @@ router.get('/users/:id', authorizeRole(['admin']), async (req, res) => {
         }
         res.json(user);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -206,7 +206,7 @@ router.get('/vendors', authorizeRole(['admin']), async (req, res) => {
       currentPage: pageNum
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -225,7 +225,7 @@ router.get('/vendors/:id/details', authorizeRole(['admin']), async (req, res) =>
     res.json(vendor);
   } catch (error) {
     console.error('Error fetching vendor details for admin:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -354,7 +354,7 @@ router.patch('/vendors/:id/verify', authorizeRole(['admin']), async (req, res) =
 
   } catch (error) {
     console.error('Error during vendor verification:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -383,7 +383,7 @@ router.get('/suggestions/categories', authorizeRole(['admin']), async (req, res)
       summary: suggestionCounts
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -427,7 +427,7 @@ router.get('/bookings', authorizeRole(['admin']), async (req, res) => {
       currentPage: page
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -480,7 +480,7 @@ router.get('/activities', authorizeRole(['admin']), async (req, res) => {
       activities
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -629,7 +629,7 @@ router.get('/catalog/categories', authorizeRole(['admin']), async (req, res) => 
     console.log("[Admin API] Categories fetched:", categories.length, "categories.");
   } catch (error) {
     console.error('Error fetching categories with stats:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -666,7 +666,7 @@ router.post('/catalog/categories', authorizeRole(['admin']), upload.none(), asyn
     io.emit('category-created', newCategoryWithStats);
     res.status(201).json(newCategoryWithStats);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -718,7 +718,7 @@ router.delete('/catalog/categories/:id', authorizeRole(['admin']), async (req, r
     io.emit('admin-category-deleted', { categoryId: req.params.id, categoryName: category.name, adminId: req.user._id, adminName: req.user.name });
     res.json({ message: 'Category deleted successfully' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -802,7 +802,7 @@ router.patch('/catalog/services/:id/toggle', authorizeRole(['admin']), async (re
     io.emit('admin-service-toggled', { serviceId: service._id, isActive: service.isActive, adminId: req.user._id, adminName: req.user.name });
     res.json(service);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -832,7 +832,7 @@ router.patch('/bookings/:id/refund', authorizeRole(['admin']), async (req, res) 
     await booking.save();
     res.json(booking);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -861,7 +861,7 @@ router.patch('/bookings/:id/payout', authorizeRole(['admin']), async (req, res) 
     await booking.save();
     res.json(booking);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -889,7 +889,7 @@ router.patch('/bookings/:id/reject-payment', authorizeRole(['admin']), async (re
     await booking.save();
     res.json(booking);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -957,7 +957,7 @@ router.patch('/bookings/:id/verify-payment', authorizeRole(['admin']), async (re
     
     res.json(booking);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

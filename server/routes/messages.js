@@ -8,11 +8,13 @@ const router = express.Router();
 router.get('/booking/:bookingId', async (req, res) => {
   try {
     const { bookingId } = req.params;
-    const booking = await Booking.findById(bookingId);
+    const booking = await Booking.findById(bookingId).populate({ path: 'vendor', select: 'user' });
+
+    if (!booking) return res.status(404).json({ error: 'Booking not found.' });
 
     // Security check: Ensure the current user is part of the booking
     const isCustomer = booking.customer.equals(req.user._id);
-    const isVendor = booking.vendor?.user.equals(req.user._id);
+    const isVendor = booking.vendor?.user?._id.equals(req.user._id);
     if (!isCustomer && !isVendor && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Access denied. You are not part of this booking.' });
     }

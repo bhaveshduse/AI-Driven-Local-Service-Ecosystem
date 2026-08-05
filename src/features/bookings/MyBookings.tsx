@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../../contexts/AuthContext";
 import apiClient from "../../services/apiClient";
 import {
@@ -67,6 +67,9 @@ interface Booking {
     status: 'pending' | 'approved' | 'rejected' | 'cancelled'; // Added 'cancelled' for consistency
   }[];
   otp?: string; // Added for real-time display
+  payment?: {
+    status: string;
+  };
   createdAt: string;
 }
 
@@ -225,17 +228,7 @@ export const MyBookings = () => {
     if (isUpdatingStatus) return;
     setIsUpdatingStatus(bookingId);
 
-    // For optimistic UI rollback
-    const originalBookings = [...bookings];
-
     try {
-      // Optimistic UI Update: Change status locally before API call.
-      setBookings((prev) =>
-        prev.map((b) =>
-          b._id === bookingId ? { ...b, status: newStatus } : b,
-        ),
-      );
-
       const body: any = { status: newStatus };
       if (otp) body.otp = otp;
 
@@ -253,6 +246,14 @@ export const MyBookings = () => {
         throw new Error(errorData.error || "Failed to update status");
       }
 
+      // Use the actual status from the backend response (e.g. "confirmed" → "awaiting-payment")
+      const updatedBooking = await response.json();
+      setBookings((prev) =>
+        prev.map((b) =>
+          b._id === bookingId ? { ...b, ...updatedBooking } : b,
+        ),
+      );
+
       // Give user feedback that the action was successful and where to find the booking
       if (newStatus === "in-progress") {
         toast.success('Job started! You can find it in the "In Progress" tab.');
@@ -263,8 +264,6 @@ export const MyBookings = () => {
         handleCloseOtpModal();
       }
     } catch (error: any) {
-      // Rollback optimistic update on failure
-      setBookings(originalBookings);
       toast.error(`Update failed: ${error.message}`);
 
       console.error("Error updating booking status:", error);
@@ -600,7 +599,7 @@ export const MyBookings = () => {
                         <span>Details</span>
                       </Link>
 
-                      {booking.status === "awaiting-payment" && user?.role === "customer" && (
+                      {booking.status === "awaiting-payment" && user?.role === "customer" && booking.payment?.status !== "verification-pending" && booking.payment?.status !== "verified" && (
                         <Link
                           to={`/bookings/${booking._id}`}
                           className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-sm"
@@ -609,22 +608,36 @@ export const MyBookings = () => {
                         </Link>
                       )}
 
+                      {booking.status === "awaiting-payment" && user?.role === "customer" && booking.payment?.status === "verification-pending" && (
+                        <span className="flex items-center space-x-2 px-4 py-2 bg-yellow-100 text-yellow-800 rounded-lg border border-yellow-300">
+                          <Clock className="h-4 w-4" />
+                          <span>Payment being verified</span>
+                        </span>
+                      )}
+
                       {booking.status === "awaiting-payment" && user?.role === "vendor" && (
-                        <button
-                          disabled={isUpdatingStatus === booking._id}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                "Cancel this booking? The customer has not completed their payment yet, and this is blocking your schedule.",
+                        booking.payment?.status === "verification-pending" ? (
+                          <span className="flex items-center space-x-2 px-4 py-2 bg-yellow-100 text-yellow-800 rounded-lg border border-yellow-300">
+                            <Clock className="h-4 w-4" />
+                            <span>Payment being verified</span>
+                          </span>
+                        ) : (
+                          <button
+                            disabled={isUpdatingStatus === booking._id}
+                            onClick={() => {
+                              if (
+                                window.confirm(
+                                  "Cancel this booking? The customer has not completed their payment yet, and this is blocking your schedule.",
+                                )
                               )
-                            )
-                              handleUpdateStatus(booking._id, "cancelled");
-                          }}
-                          className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
-                        >
-                          <X className="h-4 w-4" />
-                          <span>Cancel (Unpaid)</span>
-                        </button>
+                                handleUpdateStatus(booking._id, "cancelled");
+                            }}
+                            className="flex items-center space-x-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                          >
+                            <X className="h-4 w-4" />
+                            <span>Cancel (Unpaid)</span>
+                          </button>
+                        )
                       )}
 
                       {/* Generic Report Button - for cases without a specific action button */}
@@ -653,10 +666,28 @@ export const MyBookings = () => {
                         booking.status,
                       ) && (
                         <>
-                          <button className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
-                            <MessageSquare className="h-4 w-4" />
-                            <span>Message</span>
-                          </button>
+                          {user?.role === "customer" && booking.vendor?.user?.phone && (
+                            <a
+                              href={`https://wa.me/91${booking.vendor.user.phone}?text=${encodeURIComponent(`Hi, regarding booking #${booking._id.slice(-8)} for ${booking.service?.title}.`)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                              <MessageSquare className="h-4 w-4" />
+                              <span>Message</span>
+                            </a>
+                          )}
+                          {user?.role === "vendor" && booking.customer?.phone && (
+                            <a
+                              href={`https://wa.me/91${booking.customer.phone}?text=${encodeURIComponent(`Hi, regarding booking #${booking._id.slice(-8)}.`)}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                            >
+                              <MessageSquare className="h-4 w-4" />
+                              <span>Message</span>
+                            </a>
+                          )}
                           {/* Show call button with number if available */}
                           {user?.role === "customer" &&
                             booking.vendor?.user?.phone && (

@@ -42,6 +42,7 @@ export const useGeolocation = () => {
 
       const { latitude, longitude } = position.coords;
       const coordinates = { lat: latitude, lon: longitude };
+      console.log(`[GPS] Browser coordinates → (${latitude}, ${longitude})`);
 
       const reverseGeocodeUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`;
       
@@ -49,10 +50,12 @@ export const useGeolocation = () => {
         headers: { 'User-Agent': 'Swayam-App/1.0' } // Nominatim requires a User-Agent
       });
       if (!response.ok) {
+        console.log(`[GPS] Reverse geocode failed (HTTP ${response.status})`);
         return { coordinates, address: null };
       }
 
       const data = await response.json();
+      console.log(`[GPS] Reverse geocode → address:`, data.address);
       
       return { coordinates, address: data.address || null };
 

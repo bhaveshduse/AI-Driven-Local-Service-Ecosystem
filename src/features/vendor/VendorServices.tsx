@@ -279,7 +279,7 @@ export const VendorServices: React.FC = () => {
                           <Link
                             to={`/vendor/services/edit/${service._id}`}
                             className={`p-2 rounded-full text-blue-600 hover:bg-blue-50 ${
-                              !!processingId ? 'pointer-events-none opacity-50' : ''
+                              processingId ? 'pointer-events-none opacity-50' : ''
                             }`}
                             title="Edit"
                           >

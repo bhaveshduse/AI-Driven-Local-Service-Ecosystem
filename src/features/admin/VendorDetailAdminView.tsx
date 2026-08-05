@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import apiClient from '../../services/apiClient';
 import { toast } from 'react-hot-toast';
-import { Loader2, AlertCircle, MapPin, Mail, Phone, Briefcase, User, Calendar, ShieldCheck, XCircle, FileText, ArrowLeft } from 'lucide-react';
+import { Loader2, AlertCircle, MapPin, Mail, Phone, XCircle, FileText, ArrowLeft } from 'lucide-react';
 
 // Re-using/extending interfaces from VendorManagement.tsx and other files
 interface UserDetails {

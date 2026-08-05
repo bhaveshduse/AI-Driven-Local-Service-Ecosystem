@@ -15,9 +15,13 @@ router.post("/register", async (req, res) => {
   try {
     const { name, email, password, phone, role, city, businessName, primaryCategory, serviceCategories, suggestedCategory } = req.body;
 
+    if (!city || !city.trim()) {
+      return res.status(400).json({ error: "City is required" });
+    }
+
     const existingUser = await User.findOne({ email });
     if (existingUser) {
-      return res.status(400).json({ error: "Email already registered" });
+      return res.status(400).json({ error: "User already exists" });
     }
 
     const user = new User({
@@ -26,7 +30,7 @@ router.post("/register", async (req, res) => {
       password,
       phone,
       role: role || "customer",
-      city: city, // Save the city from the registration form
+      city: city.trim(),
     });
 
     await user.save();
@@ -69,7 +73,7 @@ router.post("/register", async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Registration failed. Please try again.' });
   }
 });
 
@@ -109,7 +113,7 @@ router.post("/login", async (req, res) => {
       },
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Login failed. Please try again.' });
   }
 });
 
@@ -125,7 +129,7 @@ router.get("/me", authenticateToken, async (req, res) => {
     }
     res.json(user);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Server error while fetching profile.' });
   }
 });
 

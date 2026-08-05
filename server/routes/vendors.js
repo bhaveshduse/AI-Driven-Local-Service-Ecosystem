@@ -67,7 +67,7 @@ router.get(
       if (!vendor) return res.status(404).json({ error: 'Vendor profile not found.' });
       res.json(vendor);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 );
@@ -104,7 +104,8 @@ router.put(
         city,
         street,
         state,
-        zipCode
+        zipCode,
+        workingLocation
       } = req.body;
 
       // --- 1. Update Linked User Document ---
@@ -178,6 +179,21 @@ router.put(
         'serviceArea.cities': cities ? JSON.parse(cities) : [],
       };
 
+      // --- 2.5. Set working location if provided ---
+      if (workingLocation) {
+        try {
+          const parsed = typeof workingLocation === 'string' ? JSON.parse(workingLocation) : workingLocation;
+          if (parsed.coordinates && Array.isArray(parsed.coordinates) && parsed.coordinates.length === 2) {
+            vendorUpdateData.workingLocation = {
+              type: 'Point',
+              coordinates: parsed.coordinates
+            };
+          }
+        } catch (e) {
+          console.warn('[Vendor] Invalid workingLocation format:', workingLocation);
+        }
+      }
+
       // --- 3. Handle Verification Document Upload and Status Change ---
       if (req.files && req.files['identityProof']) {
         vendorUpdateData['documents.identityProof'] = req.files['identityProof'][0].path.replace(/\\/g, '/');
@@ -199,7 +215,7 @@ router.put(
       res.json(vendor);
     } catch (err) {
       console.error("Error updating vendor profile:", err);
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 );
@@ -237,7 +253,7 @@ router.get(
 
       res.json(services);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 );
@@ -313,7 +329,7 @@ router.post(
       });
     } catch (err) {
       console.error('Verification Error:', err);
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 );
@@ -337,7 +353,7 @@ router.get(
 
       res.json(bookings);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 );
@@ -408,7 +424,7 @@ router.patch(
 
       res.json(booking);
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 );
@@ -441,7 +457,7 @@ router.get(
         bookings: bookings.slice(0, 10),
       });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 );
@@ -525,7 +541,7 @@ router.get(
         }
       });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: 'Internal server error' });
     }
   }
 );

@@ -49,7 +49,7 @@ router.get('/vendor', authorizeRole(['vendor']), async (req, res) => {
     });
 
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -82,7 +82,7 @@ router.get('/customer', authorizeRole(['customer']), async (req, res) => {
             },
         });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 

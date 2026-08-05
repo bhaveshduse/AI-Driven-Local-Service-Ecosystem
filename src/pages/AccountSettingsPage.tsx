@@ -1,4 +1,3 @@
-import React from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Navigate } from 'react-router-dom';
 import ProfilePage from '../components/ProfilePage'; // This is the customer's settings page

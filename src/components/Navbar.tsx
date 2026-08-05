@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { Home, User, LogOut, Menu, X, Wrench } from 'lucide-react';
+import { Home, LogOut, Menu, X, Wrench } from 'lucide-react';
 import clsx from 'clsx';
 import ProfileDropdown from './ProfileDropdown';
 import Avatar from './Avatar';

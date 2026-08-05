@@ -249,7 +249,7 @@ router.get('/', async (req, res) => {
 
   } catch (error) {
     console.error('[services.js] Critical error in GET /services:', error);
-    res.status(500).json({ error: 'An internal server error occurred.', details: error.message });
+    res.status(500).json({ error: 'An internal server error occurred.' });
   }
 });
 
@@ -294,7 +294,7 @@ router.get('/suggestions', async (req, res) => {
 
     res.json(Array.from(suggestions).slice(0, 8));
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -306,6 +306,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
     const service = await Service.findById(req.params.id)
       .populate({
         path: 'vendor',
+        select: 'businessName verificationStatus serviceArea workingLocation experience city',
         populate: {
           path: 'user',
           select: 'name ratings address avatar'
@@ -330,7 +331,7 @@ router.get('/:id', authenticateToken, async (req, res) => {
 
     res.json(serviceObj);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -387,13 +388,19 @@ router.post('/', authenticateToken, authorizeRole(['vendor']), upload.array('ima
       images: imagePaths,
     };
 
-    // FIX: Conditionally add the location field to prevent Mongo geo index errors.
-    // This copies the vendor's location to the service upon creation.
-    if (vendorUser.address && Array.isArray(vendorUser.address.coordinates) && vendorUser.address.coordinates.length === 2) {
+    // Conditionally add the location field to prevent Mongo geo index errors.
+    // Prefer vendor's workingLocation, fall back to user address coordinates.
+    const vendorCoords =
+      (vendor.workingLocation?.coordinates?.length === 2 && vendor.workingLocation.coordinates) ||
+      (vendorUser.address?.coordinates?.length === 2 && vendorUser.address.coordinates);
+
+    if (vendorCoords) {
       serviceData.location = {
         type: 'Point',
-        coordinates: vendorUser.address.coordinates
+        coordinates: vendorCoords,
       };
+    } else {
+      serviceData.location = undefined;
     }
 
     const service = new Service(serviceData);
@@ -427,7 +434,7 @@ router.post('/', authenticateToken, authorizeRole(['vendor']), upload.array('ima
   } catch (error) {
     // Enhanced error logging for easier debugging
     console.error("SERVICE CREATION ERROR:", error);
-    res.status(500).json({ error: error.message, stack: process.env.NODE_ENV === 'development' ? error.stack : undefined });
+    res.status(500).json({ error: 'Service creation failed. Please check your input and try again.' });
   }
 });
 
@@ -519,7 +526,7 @@ router.put('/:id', authenticateToken, authorizeRole(['vendor']), upload.array('i
 
     res.json(populatedService);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -548,7 +555,7 @@ router.delete('/:id', authenticateToken, authorizeRole(['vendor']), async (req, 
 
     res.json({ message: 'Service deleted successfully.' });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -588,7 +595,7 @@ router.patch('/:id/toggle-active', authenticateToken, authorizeRole(['vendor']),
 
     res.json(service);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -604,7 +611,7 @@ router.get('/categories/list', async (req, res) => {
         // Return the full category object to be consistent across the app
         res.json(categories);
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 

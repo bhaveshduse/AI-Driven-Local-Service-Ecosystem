@@ -26,16 +26,15 @@ const serviceSchema = new mongoose.Schema({
     maxlength: 1000
   },
 
-  // 🔥 ADDED: Denormalized location for efficient geospatial queries
+  // Denormalized location for efficient geospatial queries (copied from vendor on creation)
   location: {
     type: {
       type: String,
       enum: ['Point'],
-      default: 'Point'
     },
     coordinates: {
-      type: [Number] // [longitude, latitude]
-    }
+      type: [Number], // [longitude, latitude]
+    },
   },
 
   pricing: {

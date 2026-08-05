@@ -1,6 +1,6 @@
 // server/utils/aiClassifier.js
 
-const axios = require('axios');
+import axios from 'axios';
 
 // Port where your Python FastAPI service runs
 const PYTHON_AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://localhost:8000"; 
@@ -10,7 +10,7 @@ const PYTHON_AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://localhost:80
  * @param {string} rawText - The user's service request text.
  * @returns {Promise<{label: string, confidence: number}>}
  */
-const classifyUserInput = async (rawText) => {
+export const classifyUserInput = async (rawText) => {
     try {
         const response = await axios.post(`${PYTHON_AI_SERVICE_URL}/classify`, {
             query: rawText,
@@ -28,5 +28,3 @@ const classifyUserInput = async (rawText) => {
         };
     }
 };
-
-module.exports = { classifyUserInput };

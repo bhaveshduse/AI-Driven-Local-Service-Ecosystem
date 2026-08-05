@@ -35,7 +35,7 @@ export const authenticateToken = async (req, res, next) => {
     if (process.env.NODE_ENV === 'development') {
       console.error('Token error:', error);
     }
-    return res.status(403).json({ error: 'Invalid token' });
+    return res.status(401).json({ error: 'Invalid or expired token. Please log in again.' });
   }
 };
 

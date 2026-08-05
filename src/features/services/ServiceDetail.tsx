@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import { useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Star, MapPin, Clock, IndianRupee, Calendar, Flag, Lock, ShieldCheck, ImageOff } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -33,8 +33,8 @@ const getExperienceText = (exp: number | undefined): string => {
  * Formats the service duration into a display string.
  * Handles pluralization and invalid/zero values.
  */
-const formatDuration = (duration: { value?: number; unit?: string } | undefined): string => {
-  const est = duration?.value;
+const formatDuration = (duration: { value?: number; estimated?: number; unit?: string } | undefined): string => {
+  const est = duration?.value ?? duration?.estimated;
   const unit = duration?.unit?.toLowerCase();
 
   if (typeof est === 'number' && est > 0 && unit) {
@@ -48,14 +48,20 @@ const formatDuration = (duration: { value?: number; unit?: string } | undefined)
  * Centralizes all price formatting logic for consistency.
  * Ensures amounts <= 0 are handled gracefully.
  */
-const getPriceInfo = (pricing: Service['pricing']) => {
-  const isPriceValid = pricing && typeof pricing.amount === 'number' && pricing.amount > 0 && pricing.unit;
+const getPriceInfo = (pricing: Service['pricing'] | undefined) => {
+  const isPriceValid = pricing && typeof pricing.amount === 'number' && pricing.amount > 0;
+
+  const unit = pricing?.unit;
+  const displayAmount = isPriceValid ? `₹${pricing.amount}` : 'N/A';
+  const fullString = isPriceValid
+    ? unit ? `₹${pricing.amount} / ${unit}` : `₹${pricing.amount}`
+    : 'Price not set';
 
   return {
-    amount: isPriceValid ? `₹${pricing.amount}` : 'N/A',
-    fullString: isPriceValid ? `₹${pricing.amount} / ${pricing.unit}` : 'Price not set',
-    sidebarUnit: pricing?.unit ?? 'per job',
-    mobileUnit: pricing?.unit, // Preserves original behavior (can be undefined)
+    amount: displayAmount,
+    fullString,
+    sidebarUnit: unit ?? 'per job',
+    mobileUnit: unit,
   };
 };
 

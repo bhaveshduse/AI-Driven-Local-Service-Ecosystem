@@ -64,7 +64,7 @@ export const PaymentVerifications: React.FC = () => {
             toast.success('Payment verified & Vendor notified!');
             console.log(`[Admin Dispatch] Triggering 120s vendor panic timer for booking: ${bookingId}`);
             setVerifications(prev => prev.filter(b => b._id !== bookingId));
-        } catch (error) {
+        } catch {
             toast.error('Payment verification failed');
         }
     };
@@ -87,7 +87,7 @@ export const PaymentVerifications: React.FC = () => {
             
             toast.success('Payment proof rejected and booking cancelled.');
             setVerifications(prev => prev.filter(b => b._id !== bookingId));
-        } catch (error) {
+        } catch {
             toast.error('Failed to reject payment proof');
         }
     };
@@ -103,7 +103,7 @@ export const PaymentVerifications: React.FC = () => {
             
             toast.success('Refund processed successfully!');
             setRefunds(prev => prev.filter(b => b._id !== bookingId));
-        } catch (error) {
+        } catch {
             toast.error('Failed to process refund');
         }
     };
@@ -119,7 +119,7 @@ export const PaymentVerifications: React.FC = () => {
             
             toast.success('Funds released to vendor successfully!');
             setPayouts(prev => prev.filter(b => b._id !== bookingId));
-        } catch (error) {
+        } catch {
             toast.error('Failed to release funds');
         }
     };

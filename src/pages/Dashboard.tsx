@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { Link } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
-import { Calendar, MapPin, Star, Clock, IndianRupee } from 'lucide-react';
+import { Calendar, MapPin, Star, IndianRupee } from 'lucide-react';
 
 interface UpcomingBooking {
   _id: string;

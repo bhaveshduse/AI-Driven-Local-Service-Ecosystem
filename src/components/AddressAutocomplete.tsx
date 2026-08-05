@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Loader2, MapPin, X } from 'lucide-react';
+import { Loader2, MapPin } from 'lucide-react';
 import { useDebounce } from '../hooks/useDebounce';
 
 export interface NominatimSuggestion {

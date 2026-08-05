@@ -7,6 +7,7 @@ export interface Address {
   city?: string;
   state?: string;
   zipCode?: string;
+  coordinates?: number[];
 }
 
 export interface ServiceQuery {
@@ -32,6 +33,7 @@ interface VendorUser {
   _id: string;
   name: string;
   avatar?: string;
+  city?: string;
   address?: Address;
   ratings: {
     average: number;
@@ -46,6 +48,13 @@ interface Vendor {
   experience: number;
   verificationStatus: string;
   user: VendorUser;
+  serviceArea?: {
+    radius: number;
+  };
+  workingLocation?: {
+    type: 'Point';
+    coordinates: [number, number];
+  };
 }
 
 export interface Service {

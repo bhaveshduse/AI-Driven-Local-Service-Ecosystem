@@ -21,7 +21,7 @@ export interface BookingPayload {
   notes?: {
     customerNotes: string;
   };
-  paymentMethod?: 'manual' | 'gateway';
+  paymentMethod?: 'manual' | 'gateway' | 'razorpay';
 }
 
 /**

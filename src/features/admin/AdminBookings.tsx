@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { 
   Calendar, 
@@ -126,6 +126,30 @@ export const AdminBookings = () => {
       }
     } catch (err: any) {
       toast.error(err.message);
+    }
+  };
+
+  const handleProcessRefund = async (bookingId: string) => {
+    try {
+      const response = await fetch(`/api/admin/bookings/${bookingId}/refund`, {
+        method: 'PATCH',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Refund processing failed');
+      }
+
+      toast.success('Refund processed successfully!');
+      fetchBookings();
+      if (selectedBooking?._id === bookingId) {
+        setSelectedBooking(null);
+      }
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to process refund');
     }
   };
 

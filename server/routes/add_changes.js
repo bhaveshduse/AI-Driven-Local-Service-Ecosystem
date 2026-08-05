@@ -72,7 +72,7 @@ router.post('/seed-categories', authenticateToken, authorizeRole(['admin']), asy
       result
     });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to seed categories.', details: error.message });
+    res.status(500).json({ error: 'Failed to seed categories.' });
   }
 });
 

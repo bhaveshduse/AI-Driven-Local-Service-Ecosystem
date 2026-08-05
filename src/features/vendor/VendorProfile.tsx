@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useForm, Controller } from 'react-hook-form';
-import { User, Building, MapPin, FileText, Loader2 } from "lucide-react";
+import { Building, MapPin, FileText, Loader2, Crosshair } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import Avatar from "../../components/Avatar";
 import ChangePasswordForm from "../../components/ChangePasswordForm";
@@ -44,6 +44,8 @@ export const VendorProfile = () => {
   const [categories, setCategories] = useState<Category[]>([]);
 
   const [isUploading, setIsUploading] = useState(false);
+  const [workingLocation, setWorkingLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [isSettingLocation, setIsSettingLocation] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const {
@@ -78,7 +80,7 @@ export const VendorProfile = () => {
     const fetchCategories = async () => {
       try { 
         setCategories(await getCategories());
-      } catch (err) {
+      } catch {
         // Silently fail on categories; the form is still usable.
       }
     };
@@ -102,7 +104,10 @@ export const VendorProfile = () => {
           state: data.user?.address?.state || '',
           zipCode: data.user?.address?.zipCode || '',
         });
-      } catch (error) {
+        if (data.workingLocation?.coordinates) {
+          setWorkingLocation({ lat: data.workingLocation.coordinates[1], lng: data.workingLocation.coordinates[0] });
+        }
+      } catch {
         toast.error("Could not load your profile data. Please try refreshing.");
       }
     };
@@ -133,6 +138,26 @@ export const VendorProfile = () => {
     }
 };
 
+  const handleSetCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      toast.error("Geolocation is not supported by your browser.");
+      return;
+    }
+    setIsSettingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setWorkingLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        toast.success("Current location set!");
+        setIsSettingLocation(false);
+      },
+      () => {
+        toast.error("Could not detect your location. Make sure GPS/location is enabled.");
+        setIsSettingLocation(false);
+      },
+      { timeout: 10000 }
+    );
+  };
+
   // Save profile
   const onSubmit = async (data: ProfileFormData) => {
     if (!token) return;
@@ -153,6 +178,9 @@ export const VendorProfile = () => {
       formData.append("zipCode", data.zipCode);
       if (data.identityProof && data.identityProof.length > 0) {
         formData.append("identityProof", data.identityProof[0]);
+      }
+      if (workingLocation) {
+        formData.append("workingLocation", JSON.stringify({ coordinates: [workingLocation.lng, workingLocation.lat] }));
       }
 
       await apiClient.put("/vendors/profile", formData, {
@@ -396,6 +424,43 @@ export const VendorProfile = () => {
               
                         </select>
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Current Working Location */}
+                  <div className="border-t pt-6">
+                    <h3 className="text-lg font-semibold text-gray-700 mb-4">Current Working Location</h3>
+                    <p className="text-sm text-gray-500 mb-3">
+                      Set your current location so customers get accurate travel estimates. Falls back to your registered address if not set.
+                    </p>
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <button
+                        type="button"
+                        disabled={isSettingLocation}
+                        onClick={handleSetCurrentLocation}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+                      >
+                        {isSettingLocation ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Crosshair className="h-4 w-4" />
+                        )}
+                        {isSettingLocation ? 'Detecting...' : workingLocation ? 'Update Current Location' : 'Set Current Location'}
+                      </button>
+                      {workingLocation && (
+                        <>
+                          <span className="text-sm text-gray-500">
+                            Lat: {workingLocation.lat.toFixed(4)}, Lng: {workingLocation.lng.toFixed(4)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setWorkingLocation(null)}
+                            className="text-sm text-red-600 hover:text-red-800 underline"
+                          >
+                            Clear
+                          </button>
+                        </>
+                      )}
                     </div>
                   </div>
 

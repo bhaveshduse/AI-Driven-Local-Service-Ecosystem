@@ -38,12 +38,20 @@ const bookingSchema = new mongoose.Schema({
       enum: ['pending', 'paid_to_platform', 'payout_pending', 'paid_to_vendor', 'refund_pending', 'refunded', 'verification-pending'],
       default: 'pending'
     },
+    method: {
+      type: String,
+      enum: ['manual', 'razorpay'],
+      default: 'manual'
+    },
     transactionId: String, // Customer's payment transaction ID
     payoutId: String,      // Vendor's payout transaction ID
     paidAt: Date,
     payoutAt: Date,
     screenshot: String,    // Path to the manual escrow screenshot
-    notes: String
+    notes: String,
+    razorpayOrderId: String,
+    razorpayPaymentId: String,
+    razorpaySignature: String
   },
   address: {
     street: String,

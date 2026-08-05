@@ -14,17 +14,28 @@ import serviceRoutes from './routes/services.js';
 import bookingRoutes from './routes/bookings.js';
 import adminRoutes from './routes/admin.js'; // This handles the catalog routes
 import dashboardRoutes from './routes/dashboard.js';
+import paymentRoutes from './routes/payments.js';
 import Category from './models/Category.js';
 // Import middleware
 import { authenticateToken } from './middleware/auth.js';
 
-dotenv.config();
+dotenv.config({ override: true });
+
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+  process.exit(1);
+});
+
+const allowedOrigins = [process.env.CLIENT_URL, process.env.FRONTEND_URL].filter(Boolean);
 
 const app = express();
 const server = createServer(app);
 const io = new Server(server, {
   cors: {
-    origin: ["http://localhost:5173", "http://localhost:5174", process.env.CLIENT_URL].filter(Boolean),
+    origin: allowedOrigins,
     methods: ["GET", "POST"],
     credentials: true
   }
@@ -35,9 +46,13 @@ const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/Swayam
 
 // 1. Middleware initialization
 app.use(cors({
-  origin: ["http://localhost:5173", "http://localhost:5174", process.env.CLIENT_URL].filter(Boolean),
+  origin: allowedOrigins,
   credentials: true
 }));
+
+// Raw body parser for Razorpay webhook (must be BEFORE express.json to preserve signature)
+app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -77,6 +92,9 @@ app.use('/api/admin', authenticateToken, adminRoutes);
 
 app.use('/api/dashboard', authenticateToken, dashboardRoutes);
 
+// Payment routes — raw body for webhook is handled via separate middleware above
+app.use('/api/payments', paymentRoutes);
+
 // 5. Socket.io logic
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
@@ -95,17 +113,48 @@ io.on('connection', (socket) => {
   });
 });
 
-// 6. Database and Server Start
+// 6. Global Error Middleware (must be after all routes)
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
 
-mongoose.connect(MONGODB_URI)
-  .then(() => {
-    console.log('✅ Connected to MongoDB');
+// 7. Database and Server Start
+async function startServer() {
+  try {
+    mongoose.connection.on('connected', () => console.log('✅ Connected to MongoDB'));
+    mongoose.connection.on('disconnected', () => console.log('⚠️ MongoDB disconnected'));
+    mongoose.connection.on('error', (err) => console.error('❌ MongoDB connection error:', err));
+
+    await mongoose.connect(MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 10,
+    });
+
     server.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
     });
-  })
-  .catch((error) => {
-    console.error('❌ MongoDB connection error:', error);
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+// Graceful shutdown
+async function shutdown(signal) {
+  console.log(`\n${signal} received. Shutting down gracefully...`);
+  server.close(() => {
+    console.log('HTTP server closed');
   });
+  await mongoose.connection.close();
+  console.log('MongoDB connection closed');
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+startServer();
 
 export { io };

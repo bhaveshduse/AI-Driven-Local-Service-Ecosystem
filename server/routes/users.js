@@ -45,7 +45,7 @@ router.get('/profile', async (req, res) => {
     }
     res.json(user);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -66,7 +66,7 @@ router.put('/profile', async (req, res) => {
     }
     res.json(user);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -85,7 +85,7 @@ router.put('/profile/avatar', upload.single('avatar'), async (req, res) => {
     }
     res.json(user);
   } catch (error) {
-    res.status(400).json({ error: error.message });
+    res.status(400).json({ error: 'Invalid file upload. Please upload a valid image.' });
   }
 });
 

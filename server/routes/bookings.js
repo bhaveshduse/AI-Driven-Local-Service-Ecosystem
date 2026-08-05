@@ -1,5 +1,6 @@
 import express from 'express';
 import Booking from '../models/Booking.js';
+import Service from '../models/Service.js';
 import Vendor from '../models/Vendor.js';
 import User from '../models/User.js';
 import { authenticateToken, authorizeRole } from '../middleware/auth.js'; // Ensure both are imported
@@ -129,11 +130,17 @@ router.post('/', async (req, res) => {
       console.warn(`Vendor ${vendorUser._id} does not have location or service radius configured. Location check skipped.`);
     }
 
+    // Fetch the actual service from DB to use the real price (never trust client-provided price)
+    const serviceDoc = await Service.findById(req.body.service).select('pricing.amount title');
+    if (!serviceDoc) {
+      return res.status(404).json({ error: 'Service not found.' });
+    }
+
     // Check if the frontend specifies manual payment (Escrow)
     const isManual = req.body.paymentMethod === 'manual';
 
     // --- COMMISSION CALCULATION (10% Platform Fee) ---
-    const priceAmount = req.body.price?.amount || 0;
+    const priceAmount = serviceDoc.pricing.amount || 0;
     const priceData = {
       amount: priceAmount,
       platformFee: priceAmount * 0.10,
@@ -141,13 +148,17 @@ router.post('/', async (req, res) => {
     };
 
     const booking = new Booking({
-      ...req.body,
-      price: priceData,
       customer: customerId,
-      // If manual escrow, payment status is pending until the customer uploads proof later.
+      vendor: vendorId,
+      service: serviceDoc._id,
+      scheduledDate: req.body.scheduledDate,
+      address: req.body.address,
+      notes: req.body.notes || {},
+      price: priceData,
+      // Payment method and status — always start as pending; Razorpay/webhook updates to paid
       payment: { 
-        status: isManual ? 'pending' : 'paid_to_platform', 
-        paidAt: isManual ? undefined : new Date() 
+        method: isManual ? 'manual' : 'razorpay',
+        status: 'pending'
       },
     });
 
@@ -207,7 +218,8 @@ router.post('/', async (req, res) => {
     
     res.status(201).json(booking);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error("Create booking error:", error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -219,7 +231,7 @@ router.post('/request', uploadPayment.single('screenshot'), async (req, res) => 
       return res.status(403).json({ error: 'Only customers can request bookings.' });
     }
 
-    const { vendor: vendorId, service, scheduledDate, address, notes, price } = req.body;
+    const { vendor: vendorId, service, scheduledDate, address, notes } = req.body;
 
     // --- LOCATION VALIDATION ---
     let parsedAddress;
@@ -233,18 +245,18 @@ router.post('/request', uploadPayment.single('screenshot'), async (req, res) => 
       return res.status(400).json({ error: 'A full address with coordinates is required.' });
     }
 
-    let parsedPrice;
-    try {
-      const basePrice = typeof price === 'string' ? JSON.parse(price) : price;
-      const amount = Number(basePrice.amount) || 0;
-      parsedPrice = {
-        amount,
-        platformFee: amount * 0.10,
-        vendorPayout: amount * 0.90
-      };
-    } catch (e) {
-      parsedPrice = { amount: 0, platformFee: 0, vendorPayout: 0 };
+    // Fetch the actual service from DB to use the real price (never trust client-provided price)
+    const serviceDoc = await Service.findById(service).select('pricing.amount');
+    if (!serviceDoc) {
+      return res.status(404).json({ error: 'Service not found.' });
     }
+
+    const priceAmount = serviceDoc.pricing.amount || 0;
+    const parsedPrice = {
+      amount: priceAmount,
+      platformFee: priceAmount * 0.10,
+      vendorPayout: priceAmount * 0.90
+    };
 
     // Verify Vendor
     const vendor = await Vendor.findById(vendorId).populate('user', 'address serviceRadiusKm');
@@ -294,7 +306,7 @@ router.post('/request', uploadPayment.single('screenshot'), async (req, res) => 
     const booking = new Booking({
       customer: _id,
       vendor: vendorId,
-      service: service,
+      service: serviceDoc._id,
       scheduledDate: scheduledDate,
       price: parsedPrice,
       address: parsedAddress,
@@ -324,7 +336,7 @@ router.post('/request', uploadPayment.single('screenshot'), async (req, res) => 
     res.status(201).json(booking);
   } catch (error) {
     console.error("Manual Escrow Booking Error:", error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -356,7 +368,7 @@ router.post('/:id/payment-proof', uploadPayment.single('screenshot'), async (req
 
     res.json(booking);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -373,8 +385,7 @@ router.get('/', async (req, res) => {
         // This case should be rare if the user has a vendor role but it's good to handle.
         return res.json([]);
       }
-      // Hide bookings from the vendor if the admin hasn't verified the manual escrow payment yet
-      query = { vendor: vendor._id, 'payment.status': { $ne: 'verification-pending' } };
+      query = { vendor: vendor._id };
     } else if (req.user.role === 'admin') {
       // For admins, query is empty, fetching all bookings.
       query = {};
@@ -454,7 +465,7 @@ router.get('/', async (req, res) => {
 
     res.json(results);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -510,7 +521,7 @@ router.get('/:id', async (req, res) => {
     // Admins can see everything, so no fields are removed for them.
     res.json(bookingObject);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -602,7 +613,7 @@ router.put('/:id', async (req, res) => {
 
     res.json(booking);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -792,7 +803,7 @@ router.patch('/:id/status', async (req, res) => {
 
     res.json(booking);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
@@ -946,7 +957,7 @@ router.post('/:id/review', async (req, res) => {
 
     res.json(booking);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

@@ -24,7 +24,7 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 MONGO_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
 MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "services")
-model_version="gemini-2.5-flash"
+model_version="gemini-2.0-flash"
 if not HF_TOKEN:
     raise EnvironmentError("Missing HF_TOKEN in .env file.")
 
@@ -59,9 +59,10 @@ LABEL_COL = "categories"
 # ==========================================
 app = FastAPI(title="AI Service Matcher")
 
+CORS_ORIGIN = os.getenv("CORS_ORIGIN", "http://localhost:5173")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[CORS_ORIGIN],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

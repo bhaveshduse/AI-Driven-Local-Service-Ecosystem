@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 // Import necessary icons
-import { Users, UserCheck, Calendar, IndianRupee, TrendingUp, Activity, RefreshCw, Layers, AlertCircle, AlertTriangle, Star, CheckCircle, Receipt } from 'lucide-react';
+import { Users, UserCheck, Calendar, IndianRupee, TrendingUp, Activity, RefreshCw, Layers, AlertCircle, AlertTriangle, Star, Receipt } from 'lucide-react';
 // Import routing hooks for navigation actions
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
