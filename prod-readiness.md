@@ -46,6 +46,16 @@
 - `server/routes/vendors.js`: PUT `/profile` accepts `workingLocation`
 - `services` route populates `workingLocation` alongside `serviceArea`
 
+### Cloudinary Asset Migration (2026-08)
+- All uploads moved from local `uploads/` to Cloudinary (cloud: `ynhqydxm`):
+  - Public assets (`type: 'upload'`): avatars (`swayam/avatars`), service images (`swayam/services`)
+  - Private assets (`type: 'private'`): identity proofs (`swayam/identity`), payment screenshots (`swayam/payments`), vendor docs
+- Private assets stored as `public_id.ext`; signed 24h URLs generated at read time via `cloudinary.utils.private_download_url`
+- `server/utils/cloudinary.js`: `uploadBuffer`, `publicIdFromStored`, `deleteAssetByStored`, `signPrivateAsset`
+- `/uploads` static serving removed (`server/index.js`), local `uploads/` folder deleted
+- DB cleanup performed: QA test vendors/users/services/bookings removed, 8 QA Cloudinary assets destroyed, legacy `uploads/` references fixed in place (12 service images → placeholders, 5 vendor identityProofs + 9 payment screenshots → null)
+- Dead chat code removed (`server/routes/messages.js`, `server/models/Message.js`)
+
 ### Debug Logging (2026-06-26)
 - `[GPS] Browser coordinates → (lat, lon)` — when `navigator.geolocation` fires
 - `[GPS] Reverse geocode → address: {...}` — Nominatim response after GPS
@@ -57,10 +67,14 @@
 
 ## 🔴 Must-Do Before Production
 
+> **Deployment status: NOT STARTED.** Code is production-complete and pushed to GitHub; hosting/deploy decision deferred by user.
+
 ### Git & Deploy
-- [ ] **Push to GitHub** — all changes local
-- [ ] **Build and verify**: `npm run build` succeeds without errors
-- [ ] **Deploy** to production server
+- [x] **Push to GitHub** — all changes committed and pushed
+- [x] **Build and verify**: `npm run lint` 0 errors, `npx tsc -b` clean, `npm run build` OK, `npm run test:api` 64/64 pass
+- [ ] **Deploy** to production server (no Dockerfile/Procfile/CI, no hosted MongoDB, no HTTPS/domain yet)
+- [ ] Provision hosted MongoDB (e.g. Atlas) — local `mongodb://localhost:27017/bapve` used today
+- [ ] Set prod env vars on host: `MONGODB_URI`, `JWT_SECRET`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`
 
 ### Manual Production Test
 Set system clock to ~4:05 PM and verify:
@@ -77,8 +91,6 @@ Set system clock to ~4:05 PM and verify:
 
 | Issue | Notes |
 |---|---|
-| 1 test fails in `useGeolocation.test.ts` — missing `navigator.geolocation` mock | Pre-existing, unrelated to our changes |
-| ESLint broken globally — version mismatch with `@typescript-eslint` | Pre-existing |
 | `availability.schedule` / `availability.timeSlots` in `Vendor.js` defined but never read | Dead code, no impact |
 | Nominatim free tier rate limits under heavy load | Low-traffic form, acceptable |
 | Nominatim returns pincode zone centroids, not building-level | Documented, by design |

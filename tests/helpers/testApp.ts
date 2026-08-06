@@ -11,7 +11,6 @@ import serviceRoutes from '../../server/routes/services.js';
 import bookingRoutes from '../../server/routes/bookings.js';
 import adminRoutes from '../../server/routes/admin.js';
 import dashboardRoutes from '../../server/routes/dashboard.js';
-import messageRoutes from '../../server/routes/messages.js';
 
 import { authenticateToken } from '../../server/middleware/auth.js';
 
@@ -46,7 +45,6 @@ export function createTestApp(): Express {
   app.use('/api/bookings', authenticateToken, bookingRoutes);
   app.use('/api/admin', authenticateToken, adminRoutes);
   app.use('/api/dashboard', authenticateToken, dashboardRoutes);
-  app.use('/api/messages', authenticateToken, messageRoutes);
 
   return app;
 }
