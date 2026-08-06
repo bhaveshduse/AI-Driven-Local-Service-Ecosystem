@@ -4,7 +4,6 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import path from 'path';
 
 // Import routes
 import authRoutes from './routes/auth.js';
@@ -56,10 +55,7 @@ app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 2. Serve uploaded files correctly
-app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
-
-// 3. Pass io to routes via request object
+// 2. Pass io to routes via request object
 app.use((req, res, next) => {
   req.io = io;
   next();

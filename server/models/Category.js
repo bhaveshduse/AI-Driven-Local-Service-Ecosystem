@@ -18,9 +18,7 @@ const categorySchema = new mongoose.Schema({
 
   image: {
     type: String,
-    // Having a default image makes the API more robust against missing uploads.
-    // Ensure this file exists in your `uploads` directory or is publicly accessible.
-    default: 'uploads/default-category.png'
+    default: 'https://placehold.co/600x400?text=Category+Image'
   },
 
   icon: {

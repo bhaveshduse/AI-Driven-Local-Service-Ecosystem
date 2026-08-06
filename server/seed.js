@@ -11,63 +11,14 @@ const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/Swayam
 
 const NASHIK_CENTER = [73.7898, 19.9975];
 
-const categoryImages = [
-  "uploads/categories/category-1772124028748.jpg",
-  "uploads/categories/category-1772128544484.jpg",
-  "uploads/categories/category-6984fa309a1b312df562ac0b-1770479275503.jpeg",
-];
+const placeholder = (text, n) =>
+  Array.from({ length: n }, (_, i) => `https://placehold.co/600x400?text=${text}+${i + 1}`);
 
-const serviceImages = [
-  "uploads/service-1771363190895.jpg",
-  "uploads/service-1771363202632.jpg",
-  "uploads/service-1771363401760.jpg",
-  "uploads/service-1771363712677.jpg",
-  "uploads/service-1771505013094.jpg",
-  "uploads/service-1771505496361.webp",
-  "uploads/service-1771505512996.avif",
-  "uploads/service-1771505552442.jpeg",
-  "uploads/service-1771505998461.avif",
-  "uploads/service-1771506017459.avif",
-  "uploads/service-1771506063897.jpeg",
-  "uploads/service-1771506083469.jpeg",
-  "uploads/service-1771506105526.jpeg",
-  "uploads/service-1771506248672.jpeg",
-  "uploads/service-1772218060259.jpeg",
-  "uploads/service-1772220152631.jpeg",
-  "uploads/service-1772220269577.jpeg",
-  "uploads/service-1772221210169.jpeg",
-  "uploads/service-1772222684536.jpeg",
-  "uploads/service-1772222994415.jpeg",
-  "uploads/service-1772223124547.jpeg",
-  "uploads/service-1772223383822.jpeg",
-  "uploads/service-1772223386279.jpeg",
-  "uploads/service-1772223448740.jpeg",
-  "uploads/service-1772223753212.jpeg",
-  "uploads/service-1772223754537.jpeg",
-  "uploads/service-1772223755800.jpeg",
-  "uploads/service-1772223971865.jpeg",
-];
+const categoryImages = placeholder("Category", 3);
 
-const vendorImages = [
-  "uploads/vendor-1770585035488.png",
-  "uploads/vendor-1770585035538.png",
-  "uploads/vendor-1770585063551.png",
-  "uploads/vendor-1770585063569.png",
-  "uploads/vendor-1770585098806.png",
-  "uploads/vendor-1770585098834.png",
-  "uploads/vendor-1770585513046.png",
-  "uploads/vendor-1770585513165.png",
-  "uploads/vendor-1770585636117.png",
-  "uploads/vendor-1770900800928.png",
-  "uploads/vendor-1770917738909.jpeg",
-  "uploads/vendor-1776257982879.jpg",
-  "uploads/vendor-1776258567476.jpg",
-  "uploads/vendor-1776258597211.jpg",
-  "uploads/vendor-1776260848412.jpg",
-  "uploads/vendor-1776267857713.jpg",
-  "uploads/vendor-1776269078183.jpg",
-  "uploads/vendor-1776269733305.jpg",
-];
+const serviceImages = placeholder("Service", 20);
+
+const vendorImages = placeholder("Vendor", 12);
 
 const categories = [
   { slug: "plumbing", name: "Plumbing", icon: "🔧", image: categoryImages[0], description: "Pipe repair, leakage fix, installation", priority: 6 },
@@ -122,8 +73,8 @@ const vendors = [
 ];
 
 const customers = [
-  { name: "Amit Kumar", email: "amit.kumar@example.com", phone: "9876543220", password: "User@123", city: "Nashik", profileImage: vendorImages[10] },
-  { name: "Neha Gupta", email: "neha.gupta@example.com", phone: "9876543221", password: "User@123", city: "Nashik", profileImage: vendorImages[11] },
+  { name: "Amit Kumar", email: "amit.kumar@example.com", phone: "9876543220", password: "User@123", city: "Nashik", avatar: vendorImages[10] },
+  { name: "Neha Gupta", email: "neha.gupta@example.com", phone: "9876543221", password: "User@123", city: "Nashik", avatar: vendorImages[11] },
 ];
 
 async function seed() {
@@ -137,6 +88,7 @@ async function seed() {
       adminExists.password = "BhaveshDuse";
       adminExists.isActive = true;
       adminExists.isVerified = true;
+      adminExists.city = adminExists.city || "Nashik";
       await adminExists.save();
       console.log("Admin user updated.");
     } else {
@@ -170,7 +122,7 @@ async function seed() {
     for (const c of customers) {
       const exists = await User.findOne({ email: c.email });
       if (exists) {
-        exists.profileImage = c.profileImage;
+        exists.avatar = c.avatar;
         await exists.save();
         console.log(`Customer updated: ${c.name}`);
       } else {

@@ -1,3 +1,5 @@
+// Load env before reading credentials (ESM imports evaluate before index.js body runs).
+import 'dotenv/config';
 import { v2 as cloudinary } from 'cloudinary';
 
 // Folders
